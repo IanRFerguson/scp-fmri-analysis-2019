@@ -1,1 +1,2 @@
-# Stanford Communities Project - Functional Neuroimaging Analysis (2021)
+# Stanford Communities Project
+## Functional Neuroimaging Analysis (2021)
