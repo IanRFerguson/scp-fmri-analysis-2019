@@ -5,8 +5,6 @@
 # IRF | Stanford University
 
 # -------- Directory Variables
-SUBJ=$1
-
 SCP="/oak/stanford/groups/jzaki/Social_Networks/project_export/includes/"
 IMAGE="/oak/stanford/groups/jzaki/zaki_images/mriqc-0.15.1.simg"
 OUTPUT="${SCP}/derivatives/mriqc/sub-${SUBJ}"
@@ -17,5 +15,5 @@ mkdir -p $OUTPUT
 # -------- Script
 singularity exec --cleanenv $IMAGE              \
     mriqc $SCP $OUTPUT                          \
-    participant --participant_label $SUBJ       \
+    participant                                 \
     -w $FLOATER
