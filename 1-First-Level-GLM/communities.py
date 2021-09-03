@@ -24,6 +24,10 @@ from nipype.interfaces.base import Bunch
 class SCP_Sub(Subject):
       
       def __init__(self, subID, task):
+            """
+            
+            """
+
             Subject.__init__(self, subID, task)
             self._nipype_output_directories()
             self.contrasts = self._taskfile_validator()[0]
@@ -31,9 +35,10 @@ class SCP_Sub(Subject):
             self.network_regressors = self._taskfile_validator()[2]
             self.trial_type = self._taskfile_validator()[3]
 
-            self.conditions = self.contrasts[0][2]
+            # Derived from task_info.json (e.g., 'face', 'cat', 'house')
+            self.conditions = self.contrasts[0][2]           
 
-            # ---- Output
+            # Output Directories
             self.nipype_level_one = self._nipype_output_directories()[1]
             self.nipype_feat_model = self._nipype_output_directories()[0]
 
@@ -83,6 +88,8 @@ class SCP_Sub(Subject):
             """
 
             base_dir = self.first_level_output                          # Base dir in derivatives directory
+            runs = len(self.preprocessed_bold_only)+1                   # Number of functional runs
+
             subdirs = [
                   # For output from FSL model design
                   'nipype/FEATModel', 'nipype/Level1Design',
@@ -102,17 +109,29 @@ class SCP_Sub(Subject):
                   keepers.append(k)                                     # Add to container
                   pathlib.Path(k).mkdir(parents=True, exist_ok=True)    # Make directory if it doesn't exist
 
+            for run in range(1, runs):
+                  # Create sub-directories per run for given task
+                  for subdir in ['nipype/FEATModel', 'nipype/Level1Design']:
+                        temp = os.path.join(base_dir, subdir, f"run-{str(run)}")
+                        pathlib.Path(temp).mkdir(parents=True, exist_ok=True)
+
             return keepers
 
-      # NOTE: The two functions below are primarily for development
-      # Don't run self._detonate() after your analysis or you'll have to re-run!
 
       def _detonate(self):
+            """
+            Press reset ... for development only
+            """
+
             import shutil
             shutil.rmtree(self.first_level_output)
 
 
       def _regen(self):
+            """
+            Press reset ... for development only
+            """
+
             self._detonate()
             self._output_1L()
             self._nipype_output_directories()
@@ -160,11 +179,13 @@ class SCP_Sub(Subject):
                   return scans
 
 
-      def session_info(self, confound_regressors, network_regressors, target_var, include_dummies=True):
+      def session_info(self, confound_regressors, network_regressors, target_var, run, include_dummies=False):
             """
             confound_regressors => List of regressors to pull from fmriprep derivatives
             network_regressors => List of regressors to pull in from Networks data
+            trial_type => Variable outlining conditions of task (e.g., dorm_member, nondorm_member)
             target_var => Column denoting social network stimuli presented in scanner
+            run => Functional run derived from BIDS naming convention
             include_dummies => Default True, determines if binary dummy regressors are included in output
 
 
@@ -178,27 +199,32 @@ class SCP_Sub(Subject):
 
             # -------- SETUP + SANITY CHECKS
             
+            # Load events TSV and isolate based on functional run
             events = self.load_events()
-            long_events = self.longform_events(target_column=target_var) 
+            events = events[events['run'] == run].reset_index(drop=True)
+
+            # Convert events to TR-wise dataframe
+            long_events = self.longform_events(target_column=target_var, run=run) 
+
+            # Load confound regressors derived from fmriprep
             confounds = self.load_confounds()   
             trial_type = self.trial_type                        
             
             try:
-                  dummy_scans = self.derive_dummy_scans()               # Our events files account for these so we skip
+                  dummy_scans = self.derive_dummy_scans()               # Our onset files account for these
             except:
-                  dummy_scans = []                                      # See above
+                  dummy_scans = []                                      # Move on with empty list
 
             if len(self.contrasts) > 0:
-                 contrasts = self.contrasts                             # Contrasts are outlined in external JSON file
+                 contrasts = self.contrasts                             # Assign contrasts to variable
             else:
                  raise ValueError('Contrasts have not been assigned')
 
-            # Sanity check for confound regressors
             for var in confound_regressors:
                  if var not in confounds.columns:
                        raise ValueError(f'{var} not found in confound table')
 
-            conditions = self.conditions                                # Added late, this attribute is now built in
+            conditions = self.conditions
 
             # -------- CONFOUND REGRESSORS
 
@@ -213,7 +239,7 @@ class SCP_Sub(Subject):
                   start = 0
 
             for var in regressors_CONFOUND_NAMES[start:]:
-                  # Create a list of lists of confound values / variable
+                  # Add values from confounds DF to list (creates list of lists)
                   regressors_CONFOUND.append(list(confounds[var].fillna(0.)))
 
             # -------- NETWORK REGRESSORS
@@ -222,7 +248,7 @@ class SCP_Sub(Subject):
             regressors_NETWORK = []
 
             for var in regressors_NETWORK_NAMES:
-                  # Create a list of lists of network values derived from communities project
+                  # Add values from events DF to list (creates list of lists)
                   regressors_NETWORK.append(list(long_events[var]))
 
             regressor_names = regressors_CONFOUND_NAMES + regressors_NETWORK_NAMES
@@ -252,7 +278,6 @@ class SCP_Sub(Subject):
                           contrasts=contrasts)]
 
             # -------- STORE REGRESSOR NAMES
-            # We'll use these values later once we create a design matrix
 
             path = os.path.join(self.nipype_feat_model, "regressor_names.txt")
 
@@ -262,17 +287,45 @@ class SCP_Sub(Subject):
                         outgoing.write('\n')
 
                   for regressor in regressor_names:
-                        outgoing.write(regressor)
+                        outgoing.write(regressor) 
                         outgoing.write('\n')
 
             return info
 
 
-      def longform_events(self, target_column):
+      def match_target_regressors(self, events, regressors, target_column):
+            """
+            events => Pre-loaded Pandas DataFrame object
+            regressors => Variables names to extract from scp_subject_information.json
+            target_column => Column to match JSON keys to (e.g., events['target])
+
+            Participants saw social targets who were also in the Communities Project
+            This function does the following:
+
+                  * Load in events TSV
+                  * Match value for variable for target ... oh boy!
+
+            Return Pandas DF
+            """
+
+            with open("./scp_subject_information.json") as incoming:
+                  network_data = json.load(incoming)
+                  
+                  def iso_value(x, variable):
+                        try:
+                              return float(network_data[x][variable])
+                        except:
+                              return None
+
+                  for var in regressors:
+                        events[var] = events[target_column].apply(lambda x: iso_value(x, var))
+
+            return events
+
+
+      def longform_events(self, target_column, run):
             """
             target_column => Denotes in-scanner network stimulus (e.g., 'target')
-
-            This creates a new events file with values for every TR (rather than every event)
 
             Perform the following operations:
                   * Match a DataFrame to the length of confound regressors
@@ -283,23 +336,37 @@ class SCP_Sub(Subject):
             Returns Pandas DataFrame object
             """
 
-            base_events = self.load_events()                            # Events-wise TSV file
-            tr_total = len(self.load_confounds())                       # Total # of TRs per task
+            # Base files (stored in BIDS directory)
+            base_events = self.load_events()
+            base_confounds = self.load_confounds()
 
-            empty_events = {'onset':list(range(0, tr_total))}           # Single-column DataFrame
+            # Isolate DFs by current run
+            base_events = base_events[base_events['run'] == run].reset_index(drop=True)
+            base_confounds = base_confounds[base_confounds['run'] == run].reset_index(drop=True)
+
+            # Number of TRs in current run
+            tr_total = len(base_confounds)
+
+            # One row / TR in DataFrame format
+            empty_events = {'onset':list(range(0, tr_total))}
             empty_events = pd.DataFrame(empty_events)
 
+            # Reduce to variables of interest
             voi = ['onset', 'duration'] + [self.trial_type] + [target_column]
-            base_events = base_events.loc[:, voi]                       # Reduce DataFrame to variables of interest
+            base_events = base_events.loc[:, voi]
 
+            # Merge events with number of TRs
             events = empty_events.merge(base_events, on='onset', how='left')
 
             for idx, val in enumerate(events['duration']):
-                  # Duration == 1, we have single row of values
+                  """
+                  * This loop fixes issues with scan durations > 1. seconds
+                  * If a task run has duration > 1s, 'target' and 'condition' rows are filled with the same values
+                  """
+
                   if float(val) == 1.:
                         continue
                         
-                  # Duration > 1, we have to copy values into next rows
                   else:
                         end = val - 1
                         
@@ -313,18 +380,14 @@ class SCP_Sub(Subject):
                   networks = json.load(incoming)
                   
                   def iso_value(x, var):
-                        """
-                        Match target stimuli with their corresponding network values
-                        """
-
                         try:
                               return float(networks[x][var])
                         except:
                               return None
                         
                   for var in self.network_regressors:
-                        # Create new column for every network regressor
-                        events[var] = events[target_column].apply(lambda x: iso_value(x, var))
+                        # Derive network values from external JSON file
+                        events[var] = events['target'].apply(lambda x: iso_value(x, var))
 
             def binarize_condition(x, condition):
                   if x == condition:
@@ -336,6 +399,7 @@ class SCP_Sub(Subject):
                   events[condition] = events['condition'].apply(lambda x: binarize_condition(x, condition))
 
             try:
+                  # Drop extraneous columns
                   events.drop(columns=['condition', 'target', 'duration'], inplace=True)
             except:
                   print('we gucci')
@@ -346,9 +410,48 @@ class SCP_Sub(Subject):
             return events
 
 
+      def _iso_design(self):
+            """
+            Returns ordered list of relative paths to `.mat` files derived from FSL
+            """
+
+            runs = len(self.preprocessed_bold_only) + 1
+            output = []
+
+            for run in range(1, runs):
+                  pattern = f"nipype/FEATModel/run-{run}/run*"
+                  for file in pathlib.Path(self.first_level_output).rglob(pattern):
+                        if '.mat' in str(file):
+                              output.append(os.path.join(file))
+
+            return output
+
+
+      def _compile_design_files(self):
+            """
+            Returns design files as Pandas DF objects
+            """
+
+            from nilearn._utils.glm import get_design_from_fslmat
+
+            designs = []
+
+            with open(os.path.join(self.nipype_feat_model, 'regressor_names.txt')) as incoming:
+                  regressors = incoming.read().split('\n')[:-1]
+                  design_files = self._iso_design()
+
+                  for file in design_files:
+                        temp = get_design_from_fslmat(file)
+                        temp.columns = regressors
+
+                        designs.append(temp)
+
+            return designs
+
+
       def firstLevel_design(self):
             """
-            Here's the good stuff
+            Create Level1 design matrices per run
 
             * Compile session information - self.session_info()
             * Specify model information - modelgen.model.SpecifyModel()
@@ -363,69 +466,78 @@ class SCP_Sub(Subject):
             from time import sleep
             import shutil
 
-            mem = Memory(self.first_level_output)                 # Memory cache (instead of NiPype)
-            
-            # Bunch object defined above
-            run_info = self.session_info(confound_regressors=self.confound_regressors,
-                                          network_regressors=self.network_regressors,
-                                          # NOTE: Hardcoded - change this
-                                          target_var='target',
-                                          include_dummies=False)
+            runs = len(self.preprocessed_bold_only) + 1
 
-            sleep(0.5)
-            print("--------- Specifying model")
-            s = model.SpecifyModel(input_units='secs',
-                                   functional_runs=self.preprocessed_bold_only,
-                                   time_repetition=1.,
-                                   high_pass_filter_cutoff=128.,
-                                   subject_info=run_info)
+            for idx, run in enumerate(range(1, runs)):
 
-            s_results = s.run()
-            s.inputs
+                  temp_output = os.path.join(self.first_level_output, f"nipype/run-{run}")
+                  pathlib.Path(temp_output).mkdir(parents=True, exist_ok=True)
+                  
+                  mem = Memory(temp_output)                 # Memory cache (instead of NiPype)
+                  
+                  # Bunch object defined above
+                  run_info = self.session_info(confound_regressors=self.confound_regressors,
+                                                network_regressors=self.network_regressors,
+                                                # NOTE: Hardcoded - change this
+                                                target_var='target',
+                                                run=run,
+                                                include_dummies=False)
 
-            sleep(0.5)
-            print("\n--------- Running Level1Design")
-            level1_design = mem.cache(fsl.model.Level1Design)
-            level1_results = level1_design(interscan_interval=1.,
-                                           bases={'dgamma': {'derivs': False}},
-                                           session_info=s_results.outputs.session_info,
-                                           model_serial_correlations=True,
-                                           contrasts=self.contrasts)
+                  sleep(0.5)
+                  print("--------- Specifying model")
+                  s = model.SpecifyModel(input_units='secs',
+                                    functional_runs=self.preprocessed_bold_only[idx],
+                                    time_repetition=1.,
+                                    high_pass_filter_cutoff=128.,
+                                    subject_info=run_info)
 
-            level1_results.outputs
+                  s_results = s.run()
+                  s.inputs
 
-            sleep(0.5)
-            print("\n--------- Running FEATModel")
-            modelgen = mem.cache(fsl.model.FEATModel)
-            modelgen_results = modelgen(fsf_file = level1_results.outputs.fsf_files,
-                                        ev_files = level1_results.outputs.ev_files)
+                  sleep(0.5)
+                  print("\n--------- Running Level1Design")
+                  level1_design = mem.cache(fsl.model.Level1Design)
+                  level1_results = level1_design(interscan_interval=1.,
+                                                bases={'dgamma': {'derivs': False}},
+                                                session_info=s_results.outputs.session_info,
+                                                model_serial_correlations=True,
+                                                contrasts=self.contrasts)
 
-            modelgen_results.outputs
+                  level1_results.outputs
+
+                  sleep(0.5)
+                  print("\n--------- Running FEATModel")
+                  modelgen = mem.cache(fsl.model.FEATModel)
+                  modelgen_results = modelgen(fsf_file = level1_results.outputs.fsf_files,
+                                          ev_files = level1_results.outputs.ev_files)
+
+                  modelgen_results.outputs
 
 
-            sleep(0.5)
-            print("\n--------- Restructuring model output")
+                  sleep(0.5)
+                  print("\n--------- Restructuring model output\n")
 
-            # Landing directories
-            target = [self.nipype_level_one, self.nipype_feat_model]
+                  # Landing directories
+                  target = [self.nipype_level_one, self.nipype_feat_model]
+                  target = [os.path.join(base, f"run-{run}") for base in target]
 
-            # Memory caches
-            source = ['nipype_mem/nipype-interfaces-fsl-model-Level1Design',
-                      'nipype_mem/nipype-interfaces-fsl-model-FEATModel']
+                  # Memory caches
+                  source = ['nipype_mem/nipype-interfaces-fsl-model-Level1Design',
+                        'nipype_mem/nipype-interfaces-fsl-model-FEATModel']
 
-            # Join relative paths
-            source = [os.path.join(self.first_level_output, x) for x in source]
+                  # Join relative paths
+                  source = [os.path.join(self.first_level_output, f"nipype/run-{run}", x) for x in source]
 
-            for target_x, source_x in zip(target, source):
-                  # Iso subdir (different name every time, alas)
-                  source_iso = [k.path for k in os.scandir(source_x) if k.is_dir()][0]
+                  for target_x, source_x in zip(target, source):
+                        # Iso subdir (different name every time, alas)
+                        source_iso = [k.path for k in os.scandir(source_x) if k.is_dir()][0]
 
-                  # Move files from source to target directory
-                  for file in os.listdir(source_iso):
-                        shutil.move(os.path.join(source_iso, file), target_x)
+                        # Move files from source to target directory
+                        for file in os.listdir(source_iso):
+                              shutil.move(os.path.join(source_iso, file), target_x)
 
-            # Remove 
-            shutil.rmtree(os.path.join(self.first_level_output, 'nipype_mem'))
+                  # Remove 
+                  shutil.rmtree(os.path.join(self.first_level_output, f"nipype/run-{run}"))
 
 
       def firstLevel_contrasts(self):
@@ -436,23 +548,24 @@ class SCP_Sub(Subject):
             """
 
             from nilearn.glm import first_level
-            from nilearn._utils.glm import get_design_from_fslmat
             from nilearn.reporting import make_glm_report
             import nilearn.plotting as nip
 
-            fsl_design = os.path.join(self.nipype_feat_model, 'run0.mat')
-            dm = get_design_from_fslmat(fsl_design)
+            designs = self._compile_design_files()
 
-            with open(os.path.join(self.nipype_feat_model, "regressor_names.txt")) as incoming:
-                  dm_columns = incoming.read().split('\n')[:-1]
-
-            dm.columns = dm_columns
-            nip.plot_design_matrix(dm, output_file=f"{self.first_level_output}/nilearn/plotting/sub-{self.subID}_design-matrix.png")
-
+            for idx, matrix in enumerate(designs):
+                  run = idx+1
+                  file_name = f"sub-{self.subID}_run-{run}_design-matrix.png"
+                  output_path = os.path.join(self.first_level_output, 'nilearn/plotting', file_name)
+                  nip.plot_design_matrix(matrix, output_file=output_path)
+            
             model = first_level.FirstLevelModel(t_r=1., smoothing_fwhm=4., hrf_model='spm')
 
             print("\n--------- Fitting model, please hold...")
-            model.fit(self.preprocessed_bold_only, design_matrices=dm)
+
+            # NOTE: Check with Andrea about this...
+
+            model.fit(self.preprocessed_bold_only, design_matrices=designs)
 
             print("\n--------- Mapping condition z-scores\n")
 
@@ -528,6 +641,4 @@ class SCP_Sub(Subject):
             # Compute contrast z-maps and plots
             self.firstLevel_contrasts()
 
-            print(f"\n\nContrasts computed! subject-{self.subID} has been mapped")
-
-
+            print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
