@@ -12,20 +12,26 @@ warnings.filterwarnings('ignore')
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import numpy as np
 import os
 import json
 import pathlib
 from tqdm import tqdm
 
 from nicursor import Subject
-from nipype.interfaces.base import Bunch
+from nilearn.glm import first_level
+from nilearn.reporting import make_glm_report
+import nilearn.plotting as nip
 
 
 class SCP_Sub(Subject):
       
       def __init__(self, subID, task):
             """
-            
+            At initialization, the following operations are performed:
+
+            * Output directories are created under ./bids/derivatives
+            * task_information JSON fill is read in and values assigned to attributes 
             """
 
             Subject.__init__(self, subID, task)
@@ -36,7 +42,8 @@ class SCP_Sub(Subject):
             self.trial_type = self._taskfile_validator()[3]
 
             # Derived from task_info.json (e.g., 'face', 'cat', 'house')
-            self.conditions = self.contrasts[0][2]           
+            self.conditions = self.contrasts[0][2]
+            self.tr = 1.           
 
             # Output Directories
             self.nipype_level_one = self._nipype_output_directories()[1]
@@ -179,150 +186,6 @@ class SCP_Sub(Subject):
                   return scans
 
 
-      def session_info(self, confound_regressors, network_regressors, target_var, run, include_dummies=False):
-            """
-            confound_regressors => List of regressors to pull from fmriprep derivatives
-            network_regressors => List of regressors to pull in from Networks data
-            trial_type => Variable outlining conditions of task (e.g., dorm_member, nondorm_member)
-            target_var => Column denoting social network stimuli presented in scanner
-            run => Functional run derived from BIDS naming convention
-            include_dummies => Default True, determines if binary dummy regressors are included in output
-
-
-            # NOTE - Before you call this function
-                  * Define regressors (these are parameters)
-                  * Assign contrasts outside of this function
-
-            This helper needs to kick out a NiPype Bunch object
-            Will be ported into first-level model
-            """
-
-            # -------- SETUP + SANITY CHECKS
-            
-            # Load events TSV and isolate based on functional run
-            events = self.load_events()
-            events = events[events['run'] == run].reset_index(drop=True)
-
-            # Convert events to TR-wise dataframe
-            long_events = self.longform_events(target_column=target_var, run=run) 
-
-            # Load confound regressors derived from fmriprep
-            confounds = self.load_confounds()   
-            trial_type = self.trial_type                        
-            
-            try:
-                  dummy_scans = self.derive_dummy_scans()               # Our onset files account for these
-            except:
-                  dummy_scans = []                                      # Move on with empty list
-
-            if len(self.contrasts) > 0:
-                 contrasts = self.contrasts                             # Assign contrasts to variable
-            else:
-                 raise ValueError('Contrasts have not been assigned')
-
-            for var in confound_regressors:
-                 if var not in confounds.columns:
-                       raise ValueError(f'{var} not found in confound table')
-
-            conditions = self.conditions
-
-            # -------- CONFOUND REGRESSORS
-
-            regressors_CONFOUND = []
-
-            if include_dummies:
-                  regressors_CONFOUND_NAMES = ['dummy_scans'] + confound_regressors
-                  regressors_CONFOUND.append(list(dummy_scans))
-                  start = 1
-            else:
-                  regressors_CONFOUND_NAMES = confound_regressors
-                  start = 0
-
-            for var in regressors_CONFOUND_NAMES[start:]:
-                  # Add values from confounds DF to list (creates list of lists)
-                  regressors_CONFOUND.append(list(confounds[var].fillna(0.)))
-
-            # -------- NETWORK REGRESSORS
-
-            regressors_NETWORK_NAMES = network_regressors
-            regressors_NETWORK = []
-
-            for var in regressors_NETWORK_NAMES:
-                  # Add values from events DF to list (creates list of lists)
-                  regressors_NETWORK.append(list(long_events[var]))
-
-            regressor_names = regressors_CONFOUND_NAMES + regressors_NETWORK_NAMES
-            regressors = regressors_CONFOUND + regressors_NETWORK
-
-            if len(regressor_names) != len(regressors):
-                raise ValueError(
-                      'Length mismatch between regressor names and regressor values')
-
-            # -------- ONSETS AND DURATIONS
-
-            onsets, durations = [], []
-
-            # Push values to lists
-            for var in conditions:
-                  onsets.append(
-                        list(events[events[trial_type] == var]['onset']))
-                  durations.append(
-                        list(events[events[trial_type] == var]['duration']))
-
-            # Store information in Bunch object and return
-            info = [Bunch(conditions=conditions,
-                          onsets=onsets,
-                          durations=durations,
-                          regressors=regressors,
-                          regressor_names=regressor_names,
-                          contrasts=contrasts)]
-
-            # -------- STORE REGRESSOR NAMES
-
-            path = os.path.join(self.nipype_feat_model, "regressor_names.txt")
-
-            with open(path, 'w') as outgoing:
-                  for condition in conditions:
-                        outgoing.write(condition)
-                        outgoing.write('\n')
-
-                  for regressor in regressor_names:
-                        outgoing.write(regressor) 
-                        outgoing.write('\n')
-
-            return info
-
-
-      def match_target_regressors(self, events, regressors, target_column):
-            """
-            events => Pre-loaded Pandas DataFrame object
-            regressors => Variables names to extract from scp_subject_information.json
-            target_column => Column to match JSON keys to (e.g., events['target])
-
-            Participants saw social targets who were also in the Communities Project
-            This function does the following:
-
-                  * Load in events TSV
-                  * Match value for variable for target ... oh boy!
-
-            Return Pandas DF
-            """
-
-            with open("./scp_subject_information.json") as incoming:
-                  network_data = json.load(incoming)
-                  
-                  def iso_value(x, variable):
-                        try:
-                              return float(network_data[x][variable])
-                        except:
-                              return None
-
-                  for var in regressors:
-                        events[var] = events[target_column].apply(lambda x: iso_value(x, var))
-
-            return events
-
-
       def longform_events(self, target_column, run):
             """
             target_column => Denotes in-scanner network stimulus (e.g., 'target')
@@ -374,7 +237,8 @@ class SCP_Sub(Subject):
                               events['condition'][idx+end] = events['condition'][idx]
                               events['target'][idx+end] = events['target'][idx]
                               
-                              end = end-1
+                              end -= 1
+
 
             with open('./scp_subject_information.json') as incoming:
                   networks = json.load(incoming)
@@ -389,230 +253,204 @@ class SCP_Sub(Subject):
                         # Derive network values from external JSON file
                         events[var] = events['target'].apply(lambda x: iso_value(x, var))
 
+
             def binarize_condition(x, condition):
                   if x == condition:
                         return 1
                   else:
                         return 0
                   
-            for condition in ['nondorm', 'dorm', 'attention_check']:
+            for condition in list(self.conditions):
+                  # Creates a binary-value column for every condition in task
                   events[condition] = events['condition'].apply(lambda x: binarize_condition(x, condition))
 
-            try:
-                  # Drop extraneous columns
-                  events.drop(columns=['condition', 'target', 'duration'], inplace=True)
-            except:
-                  print('we gucci')
-
             for var in self.network_regressors:
+                  # Fill network regressor columns with 0
                   events[var] = events[var].fillna(0)
 
             return events
 
 
-      def _iso_design(self):
+      # ------ DEFINE DESIGN MATRICES AND RUN GLM WITH NILEARN
+
+
+      def firstLevel_nilearn_design(self):
             """
-            Returns ordered list of relative paths to `.mat` files derived from FSL
-            """
+            Creates design matrices per run using Nilearn
 
-            runs = len(self.preprocessed_bold_only) + 1
-            output = []
-
-            for run in range(1, runs):
-                  pattern = f"nipype/FEATModel/run-{run}/run*"
-                  for file in pathlib.Path(self.first_level_output).rglob(pattern):
-                        if '.mat' in str(file):
-                              output.append(os.path.join(file))
-
-            return output
-
-
-      def _compile_design_files(self):
-            """
-            Returns design files as Pandas DF objects
+            Returns list of matrix objects
             """
 
-            from nilearn._utils.glm import get_design_from_fslmat
-
-            designs = []
-
-            with open(os.path.join(self.nipype_feat_model, 'regressor_names.txt')) as incoming:
-                  regressors = incoming.read().split('\n')[:-1]
-                  design_files = self._iso_design()
-
-                  for file in design_files:
-                        temp = get_design_from_fslmat(file)
-                        temp.columns = regressors
-
-                        designs.append(temp)
-
-            return designs
+            with open('./scp_task_information.json') as incoming:
+                  networks = json.load(incoming)[self.task]             # Read in task information as a dictionary
 
 
-      def firstLevel_design(self):
-            """
-            Create Level1 design matrices per run
+            def generate_matrices(run):
+                  """
+                  Helper function to loop through runs and generate 1:1 matrix:run
 
-            * Compile session information - self.session_info()
-            * Specify model information - modelgen.model.SpecifyModel()
-            * Feed contrasts to level one design - fsl.model.Level1Design()
-            * Populate FSL design matrix - fsl.model.FEATModel()
-            * Drive everything back from memory into output directories
-            """
+                  Returns single design matrix
+                  """
 
-            import nipype.algorithms.modelgen as model
-            from nipype.interfaces import fsl
-            from nipype.caching import Memory
-            from time import sleep
-            import shutil
+                  # Load in events file for the current run
+                  events = self.load_events(run=run).loc[:,['onset','duration','condition']].reset_index(drop=True)
+                  events.rename(columns={'condition':'trial_type'}, inplace=True)
 
-            runs = len(self.preprocessed_bold_only) + 1
+                  # Load in confound regressors for the current run
+                  confound_regressor_names = list(networks['confound_regressors'])
+                  confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
 
-            for idx, run in enumerate(range(1, runs)):
+                  """
+                  If you have network regressors defined they'll be added to the DM here
+                  """
 
-                  temp_output = os.path.join(self.first_level_output, f"nipype/run-{run}")
-                  pathlib.Path(temp_output).mkdir(parents=True, exist_ok=True)
+                  if len(self.network_regressors) > 0:
+                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
+                        confounds = confounds.merge(long_network, on='index')
+                        confound_regressor_names += list(self.network_regressors)
                   
-                  mem = Memory(temp_output)                 # Memory cache (instead of NiPype)
+                  # Attributes for the DM
+                  n_scans = len(confounds)
+                  tr = self.tr
+                  frame_times = np.arange(n_scans) * tr
+                  hrf_model = 'spm'
+
+                  """
+                  Nilearn doesn't accept NA's in confound regressors
+                  We'll mean impute any missing datat here
+                  """
+
+                  mean_impute = {}                                      # Empty dictionary to hold key:value pairs
+
+                  for var in ['framewise_displacement', 'dvars']:
+                        mean_impute[var] = np.mean(confounds[var])      # We'll accept FD and DVARS missing vals only
+
+                  """
+                  We want a list of *n* values per row (1 value per additional regressor)
+                  Now we'll loop through confounds DataFrame and adding all values per row to a list
+                  Then that list will be appended to the master list
+                  """
+
+                  motion = []                                           # Parent list
+
+                  for ix, index in enumerate(confounds['index']):
+                        package = []                                    # Child list (1 list per row)
+
+                        for var in confound_regressor_names:
+                              temp = confounds[var][ix]
+
+                              if np.isnan(temp):
+                                    # Impute null values with mean / var
+                                    package.append(mean_impute[var])
+                              else:
+                                    package.append(temp)
+
+                        motion.append(package)
+
+                  return first_level.make_first_level_design_matrix(frame_times,
+                                                                    events,
+                                                                    drift_model='polynomial',
+                                                                    drift_order=3,
+                                                                    add_regs=motion,
+                                                                    add_reg_names=confound_regressor_names,
+                                                                    hrf_model=hrf_model)
+
+
+            functional_runs = len(self.preprocessed_bold_only) + 1      # For an exclusive range   
+            design_matrices = []                                        # Empty list to append matrix objects into
+            
+            for run in range(1, functional_runs):
+                  # Generate a design matrix per run
+                  matrix = generate_matrices(run=run)
                   
-                  # Bunch object defined above
-                  run_info = self.session_info(confound_regressors=self.confound_regressors,
-                                                network_regressors=self.network_regressors,
-                                                # NOTE: Hardcoded - change this
-                                                target_var='target',
-                                                run=run,
-                                                include_dummies=False)
+                  # Filename for DM output
+                  file_name = f"sub-{self.subID}_task-{self.task}_run-{run}_design-matrix.png"
+                  
+                  # Relative path for DM output
+                  output_path = os.path.join(self.first_level_output, 'nilearn/plotting', file_name)
+                  
+                  # Create and save design matrix
+                  nip.plot_design_matrix(matrix, output_file=output_path)
 
-                  sleep(0.5)
-                  print("--------- Specifying model")
-                  s = model.SpecifyModel(input_units='secs',
-                                    functional_runs=self.preprocessed_bold_only[idx],
-                                    time_repetition=1.,
-                                    high_pass_filter_cutoff=128.,
-                                    subject_info=run_info)
+                  # Add DM to list
+                  design_matrices.append(matrix)
 
-                  s_results = s.run()
-                  s.inputs
-
-                  sleep(0.5)
-                  print("\n--------- Running Level1Design")
-                  level1_design = mem.cache(fsl.model.Level1Design)
-                  level1_results = level1_design(interscan_interval=1.,
-                                                bases={'dgamma': {'derivs': False}},
-                                                session_info=s_results.outputs.session_info,
-                                                model_serial_correlations=True,
-                                                contrasts=self.contrasts)
-
-                  level1_results.outputs
-
-                  sleep(0.5)
-                  print("\n--------- Running FEATModel")
-                  modelgen = mem.cache(fsl.model.FEATModel)
-                  modelgen_results = modelgen(fsf_file = level1_results.outputs.fsf_files,
-                                          ev_files = level1_results.outputs.ev_files)
-
-                  modelgen_results.outputs
+            return design_matrices
 
 
-                  sleep(0.5)
-                  print("\n--------- Restructuring model output\n")
-
-                  # Landing directories
-                  target = [self.nipype_level_one, self.nipype_feat_model]
-                  target = [os.path.join(base, f"run-{run}") for base in target]
-
-                  # Memory caches
-                  source = ['nipype_mem/nipype-interfaces-fsl-model-Level1Design',
-                        'nipype_mem/nipype-interfaces-fsl-model-FEATModel']
-
-                  # Join relative paths
-                  source = [os.path.join(self.first_level_output, f"nipype/run-{run}", x) for x in source]
-
-                  for target_x, source_x in zip(target, source):
-                        # Iso subdir (different name every time, alas)
-                        source_iso = [k.path for k in os.scandir(source_x) if k.is_dir()][0]
-
-                        # Move files from source to target directory
-                        for file in os.listdir(source_iso):
-                              shutil.move(os.path.join(source_iso, file), target_x)
-
-                  # Remove 
-                  shutil.rmtree(os.path.join(self.first_level_output, f"nipype/run-{run}"))
-
-
-      def firstLevel_contrasts(self):
+      def firstLevel_nilearn_contrasts(self):
             """
-            Leverages nilearn.glm.first_level module
-            Calculates contrasts
-            Saves z-map NifTi's and plots
+            Runs FirstLevelModel via Nilearn GLM package
+            Automatically computes contrats for your conditions and 
             """
 
             from nilearn.glm import first_level
             from nilearn.reporting import make_glm_report
             import nilearn.plotting as nip
 
-            designs = self._compile_design_files()
+            # List of design matrices derived from helper function
+            design_matrices = self.firstLevel_nilearn_design()
 
-            for idx, matrix in enumerate(designs):
-                  run = idx+1
-                  file_name = f"sub-{self.subID}_run-{run}_design-matrix.png"
-                  output_path = os.path.join(self.first_level_output, 'nilearn/plotting', file_name)
-                  nip.plot_design_matrix(matrix, output_file=output_path)
-            
-            model = first_level.FirstLevelModel(t_r=1., smoothing_fwhm=4., hrf_model='spm')
+            # Scaffolding for model (HRF model and smoothing kernel)
+            glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=4., hrf_model='spm')
 
             print("\n--------- Fitting model, please hold...")
-
-            # NOTE: Check with Andrea about this...
-
-            model.fit(self.preprocessed_bold_only, design_matrices=designs)
-
-            print("\n--------- Mapping condition z-scores\n")
-
+            model = glm.fit(self.preprocessed_bold_only, design_matrices=design_matrices)
             contrasts_of_interest = list(self.conditions) + list(self.network_regressors)
 
+            print("\n--------- Mapping condition z-maps\n")
             for contrast in tqdm(contrasts_of_interest):
 
+                  # Relative paths for brain map visualizations
                   glass_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_plot-glass-brain.png"
                   stat_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_plot-stat-map.png"
                   report_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_summary.html"
                   nifti_output = f"{self.nilearn_first_level_condition}/sub-{self.subID}_condition-{contrast}_z-map.nii.gz"
 
+                  # Compute a condition-specific contrast relative to baseline
                   z_map = model.compute_contrast(contrast)
 
+                  # Plot and save brain map visualizations
                   nip.plot_glass_brain(z_map, colorbar=False, threshold=3,
-                                    plot_abs=False, display_mode='lyrz',
-                                    title=contrast, output_file=glass_output)
+                                     plot_abs=False, display_mode='lyrz',
+                                     title=contrast, output_file=glass_output)
 
                   nip.plot_stat_map(z_map, threshold=3, colorbar=False,
-                              draw_cross=False, display_mode='ortho',
-                              title=contrast, output_file=stat_output)
+                                  draw_cross=False, display_mode='ortho',
+                                  title=contrast, output_file=stat_output)
 
                   make_glm_report(model=model,
-                              contrasts=contrast,
-                              plot_type='glass').save_as_html(report_output)
+                                contrasts=contrast,
+                                plot_type='glass').save_as_html(report_output)
 
+                  # Save .nii.gz 
                   z_map.to_filename(os.path.join(nifti_output))
 
-            print("\n--------- Mapping contrast z-scores\n")
+            print("\n--------- Mapping contrast z-maps\n")
 
             for outer in tqdm(self.conditions):
                   for inner in self.conditions:
-
                         if (inner == "attention_check" or outer == "attention_check"):
+                              # No need to compare conditions to attention checks
                               continue
 
                         if outer != inner:
-
+                              # E.g., nondorm - dorm
                               z_contrast = f"{outer} - {inner}"
+
+                              # E.g., nondorm-dorm
                               contrast = z_contrast.replace(' ', '')
+
+                              # Relative paths for brain map visualizations
                               glass_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_plot-glass-brain.png"
                               stat_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_plot-stat-map.png"
                               report_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_summary.html"
                               nifti_output = f"{self.nilearn_first_level_contrasts}/sub-{self.subID}_contrast-{contrast}_z-map.nii.gz"
 
+                              # Compute two condition contrast
                               z_map = model.compute_contrast(z_contrast)
 
+                              # Plot and save brain map visualizations
                               nip.plot_glass_brain(z_map, colorbar=False, threshold=3,
                                                    plot_abs=False, display_mode='lyrz',
                                                    title=z_contrast, output_file=glass_output)
@@ -625,7 +463,11 @@ class SCP_Sub(Subject):
                                           contrasts=z_contrast,
                                           plot_type='glass').save_as_html(report_output)
 
+                              # Save .nii.gz
                               z_map.to_filename(os.path.join(nifti_output))
+
+
+      # ------ RUN GLM OF YOUR CHOOSING
 
 
       def run_first_level_glm(self):
@@ -635,10 +477,6 @@ class SCP_Sub(Subject):
             Let's call it neurochristmas
             """
 
-            # Compute design matrix and regressors
-            self.firstLevel_design()
-
-            # Compute contrast z-maps and plots
-            self.firstLevel_contrasts()
+            self.firstLevel_nilearn_contrasts()          
 
             print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
