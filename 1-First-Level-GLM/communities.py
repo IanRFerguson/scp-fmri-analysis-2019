@@ -44,12 +44,13 @@ class SCP_Sub(Subject):
             self.network_regressors = task_info['network_regressors']   # Regressors to include from SCP surveys
             self.block_regressors = task_info['block_regressors']       # Within-block regressors (for block-design)
             self.trial_type = task_info['trial_type']                   # Column in onsets file to split conditions on
+            self.contrasts = task_info['design-contrasts']              # Weights to overwrite default 1 / -1
 
             # Output Directories
-            self.nilearn_first_level_condition = output[2]
-            self.nilearn_first_level_contrasts = output[3]
-            self.nilearn_plotting_condition = output[4]
-            self.nilearn_plotting_contrasts = output[5]
+            self.nilearn_first_level_condition = output[0]
+            self.nilearn_first_level_contrasts = output[1]
+            self.nilearn_plotting_condition = output[2]
+            self.nilearn_plotting_contrasts = output[3]
 
 
       # -------- FIRST-LEVEL GLM
@@ -187,58 +188,54 @@ class SCP_Sub(Subject):
             """
 
             # Base files (stored in BIDS directory)
-            base_events = self.load_events()
-            base_confounds = self.load_confounds()
-
-            # Isolate DFs by current run
-            base_events = base_events[base_events['run'] == run].reset_index(drop=True)
-            base_confounds = base_confounds[base_confounds['run'] == run].reset_index(drop=True)
+            base_events = self.load_events(run=run)
+            base_confounds = self.load_confounds(run=run)
 
             # Number of TRs in current run
             tr_total = len(base_confounds)
 
             # One row / TR in DataFrame format
-            empty_events = {'onset':list(range(0, tr_total))}
-            empty_events = pd.DataFrame(empty_events)
+            empty_events = pd.DataFrame({'onset':list(range(0, tr_total))})
 
             # Reduce to variables of interest
             voi = ['onset', 'duration'] + [self.trial_type] + [target_column]
+
+            if "trial_type" in list(base_events.columns):
+                  voi = voi + ['trial_type']
+
             base_events = base_events.loc[:, voi]
 
             # Merge events with number of TRs
             events = empty_events.merge(base_events, on='onset', how='left')
+            modulators = list(events.columns)[2:]
 
-            for idx, val in enumerate(events['duration']):
+            for index, value in enumerate(events['duration']):
                   """
                   * This loop fixes issues with scan durations > 1. seconds
                   * If a task run has duration > 1s, 'target' and 'condition' rows are filled with the same values
                   """
-
-                  if float(val) == 1.:
-                        continue
-                        
-                  else:
-                        end = val - 1
-                        
-                        while end > 0:
-                              events[self.trial_type][idx+end] = events[self.trial_type][idx]
-                              events['target'][idx+end] = events['target'][idx]
+                  if not np.isnan(value):
+                        if float(value) > 1.:
+                              end = value - 1.
                               
-                              end -= 1
+                              while end > 0:
+                                    for var in modulators:
+                                          events[var][index+end] = events[var][index]
+                                    end -= 1
 
-
-            with open('./scp_subject_information.json') as incoming:
-                  networks = json.load(incoming)
-                  
-                  def iso_value(x, var):
-                        try:
-                              return float(networks[x][var])
-                        except:
-                              return None
+            if len(self.network_regressors) > 0:
+                  with open('./scp_subject_information.json') as incoming:
+                        networks = json.load(incoming)
                         
-                  for var in self.network_regressors:
-                        # Derive network values from external JSON file
-                        events[var] = events['target'].apply(lambda x: iso_value(x, var))
+                        def iso_value(x, var):
+                              try:
+                                    return float(networks[x][var])
+                              except:
+                                    return None
+                              
+                        for var in self.network_regressors:
+                              # Derive network values from external JSON file
+                              events[var] = events['target'].apply(lambda x: iso_value(x, var))
 
 
             def binarize_condition(x, condition):
@@ -249,11 +246,11 @@ class SCP_Sub(Subject):
                   
             for condition in list(self.conditions):
                   # Creates a binary-value column for every condition in task
-                  events[condition] = events['condition'].apply(lambda x: binarize_condition(x, condition))
+                  events[condition] = events[self.trial_type].apply(lambda x: binarize_condition(x, condition))
 
-            for var in self.network_regressors:
-                  # Fill network regressor columns with 0
-                  events[var] = events[var].fillna(0)
+            if len(self.block_regressors) > 0:
+                  for condition in list(self.block_regressors):
+                        events[condition] = events['trial_type'].apply(lambda x: binarize_condition(x, condition))
 
             return events
 
@@ -291,13 +288,21 @@ class SCP_Sub(Subject):
                   If you have network regressors defined they'll be added to the DM here
                   """
 
-                  if len(self.network_regressors) > 0:
+                  if (len(self.network_regressors) > 0) and (len(self.block_regressors) == 0):
                         long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
                         confounds = confounds.merge(long_network, on='index')
                         confound_regressor_names += list(self.network_regressors)
 
-                  if len(self.block_regressors) > 0:
-                        pass
+                  elif (len(self.network_regressors) == 0) and (len(self.block_regressors) > 0):
+                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.block_regressors].reset_index()
+                        confounds = confounds.merge(long_network, on='index')
+                        confound_regressor_names += list(self.block_regressors)
+
+                  elif (len(self.network_regressors) > 0) and (len(self.block_regressors) > 0):
+                        voi = self.network_regressors + self.block_regressors
+                        long_network = self.longform_events(target_column='target', run=run).loc[:, voi].reset_index()
+                        confounds = confounds.merge(long_network, on='index')
+                        confound_regressor_names += voi
                   
                   # Attributes for the DM
                   n_scans = len(confounds)
@@ -373,10 +378,6 @@ class SCP_Sub(Subject):
             Runs FirstLevelModel via Nilearn GLM package
             Automatically computes contrats for your conditions and 
             """
-
-            from nilearn.glm import first_level
-            from nilearn.reporting import make_glm_report
-            import nilearn.plotting as nip
 
             # List of design matrices derived from helper function
             design_matrices = self.firstLevel_nilearn_design()
