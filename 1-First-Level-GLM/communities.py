@@ -35,39 +35,30 @@ class SCP_Sub(Subject):
             """
 
             Subject.__init__(self, subID, task)
-            self._nipype_output_directories()
-            self.contrasts = self._taskfile_validator()[0]
-            self.confound_regressors = self._taskfile_validator()[1]
-            self.network_regressors = self._taskfile_validator()[2]
-            self.trial_type = self._taskfile_validator()[3]
+            task_info = self._taskfile_validator()                      # Ensures that neccesary JSON files exist
+            output = self._nipype_output_directories()                  # Creates
 
-            # Derived from task_info.json (e.g., 'face', 'cat', 'house')
-            self.conditions = self.contrasts[0][2]
-            self.tr = 1.           
+            self.conditions = task_info['conditions']                   # In-scanner conditions
+            self.tr = task_info['tr']                                   # Repetition time
+            self.confound_regressors = task_info['confound_regressors'] # Regressors to include from fmriprep
+            self.network_regressors = task_info['network_regressors']   # Regressors to include from SCP surveys
+            self.block_regressors = task_info['block_regressors']       # Within-block regressors (for block-design)
+            self.trial_type = task_info['trial_type']                   # Column in onsets file to split conditions on
 
             # Output Directories
-            self.nipype_level_one = self._nipype_output_directories()[1]
-            self.nipype_feat_model = self._nipype_output_directories()[0]
-
-            self.nilearn_first_level_condition = self._nipype_output_directories()[2]
-            self.nilearn_first_level_contrasts = self._nipype_output_directories()[3]
-            self.nilearn_plotting_condition = self._nipype_output_directories()[4]
-            self.nilearn_plotting_contrasts = self._nipype_output_directories()[5]
+            self.nilearn_first_level_condition = output[2]
+            self.nilearn_first_level_contrasts = output[3]
+            self.nilearn_plotting_condition = output[4]
+            self.nilearn_plotting_contrasts = output[5]
 
 
       # -------- FIRST-LEVEL GLM
 
       def _taskfile_validator(self):
             """
-            Confirms the existence of the following:
+            Confirms the existence of the following files at the same directory level:
                   * scp_subject_information.json
                   * scp_task_information.json
-
-            If it exists, sets the following:
-                  * Contrasts
-                  * Confound regressors
-                  * Network regressors
-                  * Condition variable
             """
 
             import json
@@ -82,8 +73,7 @@ class SCP_Sub(Subject):
                   info = json.load(incoming)                            # Read JSON as dictionary
                   reduced = info[self.task]                             # Reduce to task-specific information
 
-                  return [reduced['contrasts'], reduced['confound_regressors'],
-                          reduced['network_regressors'], reduced['trial_type']]
+                  return reduced
 
 
       def _nipype_output_directories(self):
@@ -98,14 +88,11 @@ class SCP_Sub(Subject):
             runs = len(self.preprocessed_bold_only)+1                   # Number of functional runs
 
             subdirs = [
-                  # For output from FSL model design
-                  'nipype/FEATModel', 'nipype/Level1Design',
-
-                  # For Z-Maps        
+                  # For Z-Maps (.nii.gz)        
                   'nilearn/FirstLevelModel/condition',
                   'nilearn/FirstLevelModel/contrasts', 
 
-                  # For brain maps 
+                  # For brain maps (visualizations)
                   'nilearn/plotting/condition',
                   'nilearn/plotting/contrasts']
 
@@ -234,7 +221,7 @@ class SCP_Sub(Subject):
                         end = val - 1
                         
                         while end > 0:
-                              events['condition'][idx+end] = events['condition'][idx]
+                              events[self.trial_type][idx+end] = events[self.trial_type][idx]
                               events['target'][idx+end] = events['target'][idx]
                               
                               end -= 1
@@ -293,8 +280,8 @@ class SCP_Sub(Subject):
                   """
 
                   # Load in events file for the current run
-                  events = self.load_events(run=run).loc[:,['onset','duration','condition']].reset_index(drop=True)
-                  events.rename(columns={'condition':'trial_type'}, inplace=True)
+                  events = self.load_events(run=run).loc[:,['onset','duration', self.trial_type]].reset_index(drop=True)
+                  events.rename(columns={self.trial_type:'trial_type'}, inplace=True)
 
                   # Load in confound regressors for the current run
                   confound_regressor_names = list(networks['confound_regressors'])
@@ -308,6 +295,9 @@ class SCP_Sub(Subject):
                         long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
                         confounds = confounds.merge(long_network, on='index')
                         confound_regressor_names += list(self.network_regressors)
+
+                  if len(self.block_regressors) > 0:
+                        pass
                   
                   # Attributes for the DM
                   n_scans = len(confounds)
