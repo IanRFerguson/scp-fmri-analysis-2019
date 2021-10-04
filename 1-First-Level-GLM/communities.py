@@ -7,10 +7,18 @@ This class allows us to run an analysis with a single function call
 Ian Richard Ferguson | Stanford University
 """
 
+"""
+RUNNING TO-DO LIST
+
+* For long network regressors ... mean inpute or 0's
+* Make sure attention checks are included in contrasts
+* Adding network regressors to socialeval and stressbuffering task
+"""
+
 import warnings
+from nilearn.glm.first_level import design_matrix
 warnings.filterwarnings('ignore')
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 import os
@@ -26,15 +34,15 @@ import nilearn.plotting as nip
 
 class SCP_Sub(Subject):
       
-      def __init__(self, subID, task):
+      def __init__(self, subID, task, suppress=True):
             """
             At initialization, the following operations are performed:
 
-            * Output directories are created under ./bids/derivatives
+            * Output directories are created under ./bids/derivatives/{sub}/{task}
             * task_information JSON fill is read in and values assigned to attributes 
             """
 
-            Subject.__init__(self, subID, task)
+            Subject.__init__(self, subID, task, suppress=suppress)
             task_info = self._taskfile_validator()                      # Ensures that neccesary JSON files exist
             output = self._nipype_output_directories()                  # Creates
 
@@ -86,16 +94,15 @@ class SCP_Sub(Subject):
             """
 
             base_dir = self.first_level_output                          # Base dir in derivatives directory
-            runs = len(self.preprocessed_bold_only)+1                   # Number of functional runs
 
             subdirs = [
                   # For Z-Maps (.nii.gz)        
-                  'nilearn/FirstLevelModel/condition',
-                  'nilearn/FirstLevelModel/contrasts', 
+                  'first-level-model/condition-maps',
+                  'first-level-model/contrast-maps', 
 
                   # For brain maps (visualizations)
-                  'nilearn/plotting/condition',
-                  'nilearn/plotting/contrasts']
+                  'plotting/condition-maps',
+                  'plotting/contrast-maps']
 
             keepers = []                                                # Container to return
 
@@ -104,11 +111,10 @@ class SCP_Sub(Subject):
                   keepers.append(k)                                     # Add to container
                   pathlib.Path(k).mkdir(parents=True, exist_ok=True)    # Make directory if it doesn't exist
 
-            for run in range(1, runs):
-                  # Create sub-directories per run for given task
-                  for subdir in ['nipype/FEATModel', 'nipype/Level1Design']:
-                        temp = os.path.join(base_dir, subdir, f"run-{str(run)}")
-                        pathlib.Path(temp).mkdir(parents=True, exist_ok=True)
+            for subdir in ['glass', 'stat', 'summary']:
+                  for dir in keepers[2:]:
+                        k = os.path.join(dir, subdir)
+                        pathlib.Path(k).mkdir(parents=True, exist_ok=True)
 
             return keepers
 
@@ -140,6 +146,14 @@ class SCP_Sub(Subject):
             """
 
             self.contrasts = CONTRASTS
+
+
+      def set_conditions(self, CONDITIONS):
+            """
+            CONDITIONS => List of condition regressors
+            """
+
+            self.conditions = CONDITIONS
 
 
       def derive_dummy_scans(self):
@@ -235,7 +249,8 @@ class SCP_Sub(Subject):
                               
                         for var in self.network_regressors:
                               # Derive network values from external JSON file
-                              events[var] = events['target'].apply(lambda x: iso_value(x, var))
+                              events[var] = events[target_column].apply(lambda x: iso_value(x, var))
+                              events[var].fillna(0, inplace=True)
 
 
             def binarize_condition(x, condition):
@@ -258,8 +273,9 @@ class SCP_Sub(Subject):
       # ------ DEFINE DESIGN MATRICES AND RUN GLM WITH NILEARN
 
 
-      def firstLevel_nilearn_design(self):
+      def firstLevel_event_design(self):
             """
+            NOTE: This function is intended for event-based designs
             Creates design matrices per run using Nilearn
 
             Returns list of matrix objects
@@ -288,21 +304,10 @@ class SCP_Sub(Subject):
                   If you have network regressors defined they'll be added to the DM here
                   """
 
-                  if (len(self.network_regressors) > 0) and (len(self.block_regressors) == 0):
+                  if (len(self.network_regressors) > 0):
                         long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
                         confounds = confounds.merge(long_network, on='index')
                         confound_regressor_names += list(self.network_regressors)
-
-                  elif (len(self.network_regressors) == 0) and (len(self.block_regressors) > 0):
-                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.block_regressors].reset_index()
-                        confounds = confounds.merge(long_network, on='index')
-                        confound_regressor_names += list(self.block_regressors)
-
-                  elif (len(self.network_regressors) > 0) and (len(self.block_regressors) > 0):
-                        voi = self.network_regressors + self.block_regressors
-                        long_network = self.longform_events(target_column='target', run=run).loc[:, voi].reset_index()
-                        confounds = confounds.merge(long_network, on='index')
-                        confound_regressor_names += voi
                   
                   # Attributes for the DM
                   n_scans = len(confounds)
@@ -335,8 +340,12 @@ class SCP_Sub(Subject):
                               temp = confounds[var][ix]
 
                               if np.isnan(temp):
-                                    # Impute null values with mean / var
-                                    package.append(mean_impute[var])
+                                    try:
+                                          # Impute null values with mean / var
+                                          package.append(mean_impute[var])
+                                    except Exception as e:
+                                          print(f"{self.subID}: {e} @ line 341\n")
+                                          package.append(temp)
                               else:
                                     package.append(temp)
 
@@ -362,7 +371,7 @@ class SCP_Sub(Subject):
                   file_name = f"sub-{self.subID}_task-{self.task}_run-{run}_design-matrix.png"
                   
                   # Relative path for DM output
-                  output_path = os.path.join(self.first_level_output, 'nilearn/plotting', file_name)
+                  output_path = os.path.join(self.first_level_output, 'plotting', file_name)
                   
                   # Create and save design matrix
                   nip.plot_design_matrix(matrix, output_file=output_path)
@@ -373,101 +382,231 @@ class SCP_Sub(Subject):
             return design_matrices
 
 
-      def firstLevel_nilearn_contrasts(self):
+      def firstLevel_block_design(self):
             """
-            Runs FirstLevelModel via Nilearn GLM package
-            Automatically computes contrats for your conditions and 
+            NOTE: This function is intended for block-designs
+            Creates a design matrix per functional run
+
+            Returns list of design matrices
             """
 
-            # List of design matrices derived from helper function
-            design_matrices = self.firstLevel_nilearn_design()
+            with open('./scp_task_information.json') as incoming:
+                  networks = json.load(incoming)[self.task]
+
+            def generate_matrices(run):
+                  events = self.load_events(run=run)
+
+                  events = events[events['trial_type'] != "fixation"].reset_index(drop=True)
+
+                  def derive_block(DF):
+                        return f"{DF['block_type']}_{DF['trial_type']}"
+
+                  events['long'] = events.apply(derive_block, axis=1)
+                  events = events.loc[:, ['onset','duration','long']].rename(columns={'long':'trial_type'})
+
+                  self.set_conditions(list(events['trial_type']))
+
+                  confound_regressor_names = list(networks['confound_regressors'])
+                  confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
+
+                  if len(self.network_regressors) > 0:
+                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
+                        confounds = confounds.merge(long_network, on='index')
+                        confound_regressor_names += list(self.network_regressors)
+
+                  # Attributes for the DM
+                  n_scans = len(confounds)
+                  tr = self.tr
+                  frame_times = np.arange(n_scans) * tr
+                  hrf_model = 'spm'
+
+                  """
+                  Nilearn doesn't accept NA's in confound regressors
+                  We'll mean impute any missing datat here
+                  """
+
+                  # Empty dictionary to hold key:value pairs
+                  mean_impute = {}
+
+                  for var in ['framewise_displacement', 'dvars']:
+                        # We'll accept FD and DVARS missing vals only
+                        mean_impute[var] = np.mean(confounds[var])
+
+                  """
+                  We want a list of *n* values per row (1 value per additional regressor)
+                  Now we'll loop through confounds DataFrame and adding all values per row to a list
+                  Then that list will be appended to the master list
+                  """
+
+                  motion = []                                           # Parent list
+
+                  for ix, index in enumerate(confounds['index']):
+                        # Child list (1 list per row)
+                        package = []
+
+                        for var in confound_regressor_names:
+                              temp = confounds[var][ix]
+
+                              if np.isnan(temp):
+                                    # Impute null values with mean / var
+                                    package.append(mean_impute[var])
+                              else:
+                                  package.append(temp)
+
+                        motion.append(package)
+
+                  return first_level.make_first_level_design_matrix(frame_times,
+                                                                    events,
+                                                                    drift_model='polynomial',
+                                                                    drift_order=3,
+                                                                    add_regs=motion,
+                                                                    add_reg_names=confound_regressor_names,
+                                                                    hrf_model=hrf_model)
+
+            # For an exclusive range
+            functional_runs = len(self.preprocessed_bold_only) + 1
+            # Empty list to append matrix objects into
+            design_matrices = []
+
+            for run in range(1, functional_runs):
+                # Generate a design matrix per run
+                matrix = generate_matrices(run=run)
+
+                # Filename for DM output
+                file_name = f"sub-{self.subID}_task-{self.task}_run-{run}_design-matrix.png"
+
+                # Relative path for DM output
+                output_path = os.path.join(self.first_level_output, 'plotting', file_name)
+
+                # Create and save design matrix
+                nip.plot_design_matrix(matrix, output_file=output_path)
+
+                # Append DM to list
+                design_matrices.append(matrix)
+
+            return design_matrices
+
+
+      def _default_contrasts(self):
+            """
+            If no contrasts are pre-defined for a task we'll compare all of them implicitly
+
+            Returns dictionary of contrasts
+            """
+
+            contrasts = {}
+
+            for outer in self.conditions:
+                  for inner in self.conditions:
+                        if outer != 'attention_check':
+                              if inner != 'attention_check':
+                                    if outer != inner:
+                                          k = f"{outer} - {inner}"
+                                          contrasts[k] = k
+
+            return contrasts
+
+
+      def _run_contrast(self, glm, contrast, output_type):
+            """
+            glm => FirstLevelModel object
+            contrast => specific condition or contrast equation (e.g., high_trust - low_trust)
+            output_type => "condition" or "contrast"
+
+            Performs the following actions:
+                  * Computes contrast on GLM
+                  * Defines relative output file paths
+                  * Plots glass brain, stat map, and summary HTML
+                  * Saves NifTi
+            """
+
+            contrast = contrast.replace(' ', '').strip()
+
+            # Relative paths for brain map visualizations
+            # Different sub-dirs for condition / contrast maps
+            if output_type == "condition":
+                  v_base = self.nilearn_plotting_condition
+                  n_base = self.nilearn_first_level_condition
+            
+            elif output_type == "contrast":
+                  v_base = self.nilearn_plotting_contrasts
+                  n_base = self.nilearn_first_level_contrasts
+
+            glass_output = f"{v_base}/glass/sub-{self.subID}_condition-{contrast}_plot-glass-brain.png"
+            stat_output = f"{v_base}/stat/sub-{self.subID}_condition-{contrast}_plot-stat-map.png"
+            report_output = f"{v_base}/summary/sub-{self.subID}_condition-{contrast}_summary.html"
+
+            nifti_output = f"{n_base}/sub-{self.subID}_condition-{contrast}_z-map.nii.gz"
+
+            # Compute the contrast itself
+            z_map = glm.compute_contrast(contrast)
+
+            # Plot and save brain map visualizations
+            nip.plot_glass_brain(z_map, colorbar=False, threshold=3.,
+                                 plot_abs=False, display_mode='lyrz',
+                                 title=contrast, output_file=glass_output)
+
+            nip.plot_stat_map(z_map, threshold=3., colorbar=False,
+                              draw_cross=False, display_mode='ortho',
+                              title=contrast, output_file=stat_output)
+
+            make_glm_report(model=glm,
+                            contrasts=contrast,
+                            plot_type='glass').save_as_html(report_output)
+
+            # Save .nii.gz
+            z_map.to_filename(os.path.join(nifti_output))
+                  
+
+      def firstLevel_contrasts(self, conditions=True):
+            """
+            Runs FirstLevelModel via Nilearn GLM package
+            If conditions=False then only pairwise trial_type contrasts are computed
+            """
+
+            # Read in task-specific parameters from external JSON file
+            with open('./scp_task_information.json') as incoming:
+                  networks = json.load(incoming)[self.task]
+
+            # If user defined contrasts don't exist, derive them
+            if networks['design-contrasts'] == 'default':
+                  contrasts = self._default_contrasts()
+            else:
+                  contrasts = networks['design-contrasts']
+
+            # Event and Block designs have different helper functions
+            if networks['design-type'] == 'event':
+                  design_matrices = self.firstLevel_event_design()
+            elif networks['design-type'] == 'block':
+                  design_matrices = self.firstLevel_block_design()
+                  
 
             # Scaffolding for model (HRF model and smoothing kernel)
             glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=4., hrf_model='spm')
 
             print("\n--------- Fitting model, please hold...")
+            # Fit data to model
             model = glm.fit(self.preprocessed_bold_only, design_matrices=design_matrices)
-            contrasts_of_interest = list(self.conditions) + list(self.network_regressors)
 
-            print("\n--------- Mapping condition z-maps\n")
-            for contrast in tqdm(contrasts_of_interest):
+            # Map baseline trial types if user desires
+            if conditions:
+                  print("\n--------- Mapping condition z-scores\n")
+                  for contrast in tqdm(self.conditions):
+                        self._run_contrast(glm=model, contrast=contrast, output_type="condition")
 
-                  # Relative paths for brain map visualizations
-                  glass_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_plot-glass-brain.png"
-                  stat_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_plot-stat-map.png"
-                  report_output = f"{self.nilearn_plotting_condition}/sub-{self.subID}_condition-{contrast}_summary.html"
-                  nifti_output = f"{self.nilearn_first_level_condition}/sub-{self.subID}_condition-{contrast}_z-map.nii.gz"
-
-                  # Compute a condition-specific contrast relative to baseline
-                  z_map = model.compute_contrast(contrast)
-
-                  # Plot and save brain map visualizations
-                  nip.plot_glass_brain(z_map, colorbar=False, threshold=3,
-                                     plot_abs=False, display_mode='lyrz',
-                                     title=contrast, output_file=glass_output)
-
-                  nip.plot_stat_map(z_map, threshold=3, colorbar=False,
-                                  draw_cross=False, display_mode='ortho',
-                                  title=contrast, output_file=stat_output)
-
-                  make_glm_report(model=model,
-                                contrasts=contrast,
-                                plot_type='glass').save_as_html(report_output)
-
-                  # Save .nii.gz 
-                  z_map.to_filename(os.path.join(nifti_output))
-
-            print("\n--------- Mapping contrast z-maps\n")
-
-            for outer in tqdm(self.conditions):
-                  for inner in self.conditions:
-                        if (inner == "attention_check" or outer == "attention_check"):
-                              # No need to compare conditions to attention checks
-                              continue
-
-                        if outer != inner:
-                              # E.g., nondorm - dorm
-                              z_contrast = f"{outer} - {inner}"
-
-                              # E.g., nondorm-dorm
-                              contrast = z_contrast.replace(' ', '')
-
-                              # Relative paths for brain map visualizations
-                              glass_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_plot-glass-brain.png"
-                              stat_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_plot-stat-map.png"
-                              report_output = f"{self.nilearn_plotting_contrasts}/sub-{self.subID}_contrast-{contrast}_summary.html"
-                              nifti_output = f"{self.nilearn_first_level_contrasts}/sub-{self.subID}_contrast-{contrast}_z-map.nii.gz"
-
-                              # Compute two condition contrast
-                              z_map = model.compute_contrast(z_contrast)
-
-                              # Plot and save brain map visualizations
-                              nip.plot_glass_brain(z_map, colorbar=False, threshold=3,
-                                                   plot_abs=False, display_mode='lyrz',
-                                                   title=z_contrast, output_file=glass_output)
-
-                              nip.plot_stat_map(z_map, threshold=3, colorbar=False,
-                                                draw_cross=False, display_mode='ortho',
-                                                title=z_contrast, output_file=stat_output)
-
-                              make_glm_report(model=model,
-                                          contrasts=z_contrast,
-                                          plot_type='glass').save_as_html(report_output)
-
-                              # Save .nii.gz
-                              z_map.to_filename(os.path.join(nifti_output))
+            # Contrasts will always be mapped
+            print("\n--------- Mapping contrast z-scores\n")
+            for k in tqdm(list(contrasts.keys())):
+                  self._run_contrast(glm=model, contrast=contrasts[k], output_type="contrast")
 
 
-      # ------ RUN GLM OF YOUR CHOOSING
-
-
-      def run_first_level_glm(self):
+      def run_first_level_glm(self, conditions=True):
             """
-            Wraps everything defined above...
+            If conditions if False, baseline z-maps are not calculated
 
-            Let's call it neurochristmas
+            This helper is technically extraneous but it wraps everything nicely, so why not
             """
 
-            self.firstLevel_nilearn_contrasts()          
+            self.firstLevel_contrasts(conditions=conditions)          
 
             print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
