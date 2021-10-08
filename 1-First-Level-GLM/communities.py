@@ -11,7 +11,6 @@ Ian Richard Ferguson | Stanford University
 RUNNING TO-DO LIST
 
 * For long network regressors ... mean inpute or 0's
-* Make sure attention checks are included in contrasts
 * Adding network regressors to socialeval and stressbuffering task
 """
 
@@ -501,16 +500,17 @@ class SCP_Sub(Subject):
                         if outer != 'attention_check':
                               if inner != 'attention_check':
                                     if outer != inner:
-                                          k = f"{outer} - {inner}"
+                                          k = f"{outer}-{inner}"
                                           contrasts[k] = k
 
             return contrasts
 
 
-      def _run_contrast(self, glm, contrast, output_type):
+      def _run_contrast(self, glm, contrast, title, output_type):
             """
             glm => FirstLevelModel object
             contrast => specific condition or contrast equation (e.g., high_trust - low_trust)
+            title => key from contrast dictionary
             output_type => "condition" or "contrast"
 
             Performs the following actions:
@@ -532,11 +532,11 @@ class SCP_Sub(Subject):
                   v_base = self.nilearn_plotting_contrasts
                   n_base = self.nilearn_first_level_contrasts
 
-            glass_output = f"{v_base}/glass/sub-{self.subID}_condition-{contrast}_plot-glass-brain.png"
-            stat_output = f"{v_base}/stat/sub-{self.subID}_condition-{contrast}_plot-stat-map.png"
-            report_output = f"{v_base}/summary/sub-{self.subID}_condition-{contrast}_summary.html"
+            glass_output = f"{v_base}/glass/sub-{self.subID}_{output_type}-{title}_plot-glass-brain.png"
+            stat_output = f"{v_base}/stat/sub-{self.subID}_{output_type}-{title}_plot-stat-map.png"
+            report_output = f"{v_base}/summary/sub-{self.subID}_{output_type}-{title}_summary.html"
 
-            nifti_output = f"{n_base}/sub-{self.subID}_condition-{contrast}_z-map.nii.gz"
+            nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_z-map.nii.gz"
 
             # Compute the contrast itself
             z_map = glm.compute_contrast(contrast)
@@ -544,11 +544,11 @@ class SCP_Sub(Subject):
             # Plot and save brain map visualizations
             nip.plot_glass_brain(z_map, colorbar=False, threshold=3.,
                                  plot_abs=False, display_mode='lyrz',
-                                 title=contrast, output_file=glass_output)
+                                 title=title, output_file=glass_output)
 
             nip.plot_stat_map(z_map, threshold=3., colorbar=False,
                               draw_cross=False, display_mode='ortho',
-                              title=contrast, output_file=stat_output)
+                              title=title, output_file=stat_output)
 
             make_glm_report(model=glm,
                             contrasts=contrast,
@@ -592,12 +592,12 @@ class SCP_Sub(Subject):
             if conditions:
                   print("\n--------- Mapping condition z-scores\n")
                   for contrast in tqdm(self.conditions):
-                        self._run_contrast(glm=model, contrast=contrast, output_type="condition")
+                        self._run_contrast(glm=model, contrast=contrast, title=contrast, output_type="condition")
 
             # Contrasts will always be mapped
             print("\n--------- Mapping contrast z-scores\n")
             for k in tqdm(list(contrasts.keys())):
-                  self._run_contrast(glm=model, contrast=contrasts[k], output_type="contrast")
+                  self._run_contrast(glm=model, contrast=contrasts[k], title=k, output_type="contrast")
 
 
       def run_first_level_glm(self, conditions=True):
@@ -608,5 +608,4 @@ class SCP_Sub(Subject):
             """
 
             self.firstLevel_contrasts(conditions=conditions)          
-
             print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
