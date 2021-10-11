@@ -7,13 +7,6 @@ This class allows us to run an analysis with a single function call
 Ian Richard Ferguson | Stanford University
 """
 
-"""
-RUNNING TO-DO LIST
-
-* For long network regressors ... mean inpute or 0's
-* Adding network regressors to socialeval and stressbuffering task
-"""
-
 import warnings
 from nilearn.glm.first_level import design_matrix
 warnings.filterwarnings('ignore')
