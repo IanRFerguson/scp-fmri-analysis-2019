@@ -4,6 +4,8 @@ First level analyses were facilitated via an extension of our `SCP_Sub` class (s
 
 For more info on `nicursor`, see <a href="https://github.com/IanRFerguson/nicursor" target=_blank>**here**</a>.
 
+<img src="./img/scp_init.png" width = 50%>
+
 
 ## Required at this directory level
 
