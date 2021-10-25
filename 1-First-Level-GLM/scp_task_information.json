@@ -1,76 +1,9 @@
 {
     "faces": {
-        "contrasts": [
-            [
-                "nondorm_v_baseline",
-                "T",
-                [
-                    "nondorm",
-                    "dorm",
-                    "attention_check"
-                ],
-                [
-                    1,
-                    0,
-                    0
-                ]
-            ],
-            [
-                "dorm_v_baseline",
-                "T",
-                [
-                    "nondorm",
-                    "dorm",
-                    "attention_check"
-                ],
-                [
-                    0,
-                    1,
-                    0
-                ]
-            ],
-            [
-                "attention_v_baseline",
-                "T",
-                [
-                    "nondorm",
-                    "dorm",
-                    "attention_check"
-                ],
-                [
-                    0,
-                    0,
-                    1
-                ]
-            ],
-            [
-                "dorm_v_all-stim",
-                "T",
-                [
-                    "nondorm",
-                    "dorm",
-                    "attention_check"
-                ],
-                [
-                    -0.5,
-                    1,
-                    -0.5
-                ]
-            ],
-            [
-                "dorm_v_nondorm",
-                "T",
-                [
-                    "nondorm",
-                    "dorm",
-                    "attention_check"
-                ],
-                [
-                    -1,
-                    1,
-                    0
-                ]
-            ]
+        "conditions": [
+            "nondorm",
+            "dorm",
+            "attention_check"
         ],
         "confound_regressors": [
             "framewise_displacement",
@@ -88,7 +21,9 @@
             "indegree_CloseFrds_fa18",
             "outdegree_CloseFrds_fa18"
         ],
+        "block_regressors": [],
         "trial_type": "condition",
+        "tr": 1.0,
         "excludes": [
             "02013",
             "02031",
@@ -96,20 +31,110 @@
             "02045",
             "02060",
             "05061"
+        ],
+        "design-contrasts": {
+          "dorm-membership": "dorm-membership",
+          "indegree": "indegree_CloseFrds_fa18"
+        },
+        "design-type": "event",
+        "group-level-regressors": [
+          "indegree_CloseFrds_fa18",
+          "outdegree_CloseFrds_fa18",
+          "Extraversion",
+          "Agreeableness",
+          "Openness",
+          "Conscientiousness",
+          "EmotionalStability",
+          "Loneliness",
+          "Self_Esteem",
+          "STAI_Anxiety"
+        ]
+    },
+    "stressbuffer": {
+        "conditions": [
+            "self",
+            "low_trust",
+            "high_trust"
+        ],
+        "confound_regressors": [
+            "framewise_displacement",
+            "dvars",
+            "csf",
+            "trans_x",
+            "trans_y",
+            "trans_z",
+            "rot_x",
+            "rot_y",
+            "rot_z",
+            "white_matter"
+        ],
+        "network_regressors": [
+          "indegree_CloseFrds_fa18",
+          "outdegree_CloseFrds_fa18"
+        ],
+        "block_regressors": [
+            "fixation",
+            "memory",
+            "perspective",
+            "valence",
+            "arousal",
+            "spatial"
+        ],
+        "trial_type": "block_type",
+        "tr": 1.0,
+        "excludes": [
+          "01022",
+          "02013",
+          "05021",
+          "05032",
+          "05036"
+        ],
+        "design-contrasts": {
+          "highlow_v_self": "(high_trust_perspective + low_trust_perspective) - self_perspective",
+          "high_v_self": "high_trust_perspective - self_perspective"
+        },
+        "design-type": "block",
+        "group-level-regressors": [
+          "indegree_CloseFrds_fa18",
+          "outdegree_CloseFrds_fa18",
+          "Loneliness",
+          "STAI_Anxiety"
         ]
     },
     "socialeval": {
-        "contrasts": [],
-        "confound_regressors": [],
+        "conditions": [
+            "prediction",
+            "evaluation",
+            "choice"
+        ],
+        "confound_regressors": [
+            "framewise_displacement",
+            "dvars",
+            "csf",
+            "trans_x",
+            "trans_y",
+            "trans_z",
+            "rot_x",
+            "rot_y",
+            "rot_z",
+            "white_matter"
+        ],
         "network_regressors": [],
-        "trial_type": "",
-        "excludes": []
-    },
-    "stressbuffer": {
-        "contrasts": [],
-        "confound_regressors": [],
-        "network_regressors": [],
-        "trial_type": "",
-        "excludes": []
+        "block_regressors": [],
+        "trial_type": "condition",
+        "tr": 1.0,
+        "excludes": [
+          "02013",
+          "02022",
+          "02045",
+          "05054",
+          "05061"
+        ],
+        "design-contrasts": "default",
+        "design-type": "event",
+        "group-level-regressors": [
+          "indegree_CloseFrds_fa18",
+          "outdegree_CloseFrds_fa18"
+        ]
     }
 }
