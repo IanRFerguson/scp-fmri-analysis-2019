@@ -7,6 +7,13 @@ This class allows us to run an analysis with a single function call
 Ian Richard Ferguson | Stanford University
 """
 
+"""
+RUNNING TO-DO LIST
+
+* For long network regressors ... mean inpute or 0's
+* Adding network regressors to socialeval and stressbuffering task
+"""
+
 import warnings
 from nilearn.glm.first_level import design_matrix
 warnings.filterwarnings('ignore')
@@ -284,22 +291,63 @@ class SCP_Sub(Subject):
                   Returns single design matrix
                   """
 
-                  # Load in events file for the current run
-                  events = self.load_events(run=run).loc[:,['onset','duration', self.trial_type]].reset_index(drop=True)
-                  events.rename(columns={self.trial_type:'trial_type'}, inplace=True)
+                  if self.task != 'faces':
 
-                  # Load in confound regressors for the current run
-                  confound_regressor_names = list(networks['confound_regressors'])
-                  confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
+                        # Load in events file for the current run
+                        events = self.load_events(run=run).loc[:,['onset','duration', self.trial_type]].reset_index(drop=True)
+                        events.rename(columns={self.trial_type:'trial_type'}, inplace=True)
 
-                  """
-                  If you have network regressors defined they'll be added to the DM here
-                  """
+                        # Load in confound regressors for the current run
+                        confound_regressor_names = list(networks['confound_regressors'])
+                        confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
 
-                  if (len(self.network_regressors) > 0):
-                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
-                        confounds = confounds.merge(long_network, on='index')
-                        confound_regressor_names += list(self.network_regressors)
+                        """
+                        If you have network regressors defined they'll be added to the DM here
+                        """
+
+                        if (len(self.network_regressors) > 0):
+                              long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
+                              confounds = confounds.merge(long_network, on='index')
+                              confound_regressor_names += list(self.network_regressors)
+
+
+                  elif self.task == 'faces':
+
+                        events = self.load_events(run=run).loc[:, ['onset', 'duration', self.trial_type]].reset_index(drop=True)
+
+                        def faces_v_ac(x):
+                              if x in ['dorm', 'nondorm']:
+                                    return 'face'
+                              else:
+                                    return 'attention'
+
+                        events['trial_type'] = events[self.trial_type].apply(lambda x: faces_v_ac(x))
+                        events.drop(columns=[self.trial_type], inplace=True)
+                        
+                        self.conditions = list(events['trial_type'].unique())
+
+                        confound_regressor_names = list(networks['confound_regressors'])
+                        confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
+
+                        if len(self.network_regressors) > 0:
+                              long_network = self.longform_events(target_column='target', run=run).reset_index()
+                              long_network['face'] = long_network['condition'].apply(lambda x: faces_v_ac(x))
+
+                              def dorm_nondorm(df):
+                                    check = df[self.trial_type]
+
+                                    if check == 'dorm':
+                                          return 1
+                                    return 0
+
+                              long_network['dorm-membership'] = long_network.apply(dorm_nondorm, axis=1)
+
+                              keepers = ['index', 'dorm-membership'] + self.network_regressors
+
+                              long_network = long_network.loc[:, keepers]
+                              confounds = confounds.merge(long_network, on='index')
+                              confound_regressor_names += ['dorm-membership'] + self.network_regressors
+
                   
                   # Attributes for the DM
                   n_scans = len(confounds)
@@ -512,8 +560,9 @@ class SCP_Sub(Subject):
                   * Plots glass brain, stat map, and summary HTML
                   * Saves NifTi
             """
+            
+            contrast = str(contrast).replace(' ', '').strip()
 
-            contrast = contrast.replace(' ', '').strip()
 
             # Relative paths for brain map visualizations
             # Different sub-dirs for condition / contrast maps
@@ -535,11 +584,11 @@ class SCP_Sub(Subject):
             z_map = glm.compute_contrast(contrast)
 
             # Plot and save brain map visualizations
-            nip.plot_glass_brain(z_map, colorbar=False, threshold=3.,
+            nip.plot_glass_brain(z_map, colorbar=False, threshold=2.3,
                                  plot_abs=False, display_mode='lyrz',
                                  title=title, output_file=glass_output)
 
-            nip.plot_stat_map(z_map, threshold=3., colorbar=False,
+            nip.plot_stat_map(z_map, threshold=2.3, colorbar=False,
                               draw_cross=False, display_mode='ortho',
                               title=title, output_file=stat_output)
 
