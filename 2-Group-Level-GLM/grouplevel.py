@@ -12,6 +12,7 @@ import warnings, os, json, pathlib
 warnings.filterwarnings('ignore')
 
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 from nilearn.glm import second_level, threshold_stats_img
 import nilearn.plotting as nip
@@ -343,7 +344,7 @@ class GroupLevel:
             return z_map
 
 
-      def contrast_QA(self, contrast):
+      def contrast_QA(self, contrast, verbose=False):
             """
             contrast => Valid first-level contrast
 
@@ -364,7 +365,9 @@ class GroupLevel:
 
             # Print message for end user + return Pandas DataFrame object
             print(f"\nYou have {len(output['sub_id'])} valid contrasts eligible for second-level modeling...\n")
-            return pd.DataFrame(output).sort_values(by="sub_id").reset_index(drop=True)
+
+            if verbose:
+                  return pd.DataFrame(output).sort_values(by="sub_id").reset_index(drop=True)
 
 
 
@@ -413,6 +416,8 @@ class GroupLevel:
 
       def resample_to_MNI152(self, target_img):
             """
+            target_img => NifTi image that we want to resample
+
             Helper function to convert target image dimensionality to MNI152 template
             """
 
@@ -420,3 +425,34 @@ class GroupLevel:
             template = load_mni152_template()                           
 
             return image.resample_to_img(target_img, template)
+
+
+      def estimate_PINES_signature(self, contrast):
+            """
+            contrast => Contrast of interest that we want to compare to PINES signature
+
+            Vectorizes brain data from a given task and calculates dot product with PINES signature vector
+            """
+
+            brain_data = self.get_brain_data(contrast=contrast)         # List of relative paths to NifTi files
+            sub_data = []                                               # Empty list to append into, will convert to array
+
+            print("Vectorizing brain maps...\n")
+
+            for sub in tqdm(brain_data):
+                  test_img = image.load_img(sub)                        # Convert Path to NifTi image
+
+                  # Resample to MNI152 and vectorize voxels into array
+                  test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
+                  
+                  # Add voxels to master array
+                  sub_data.append(test_resample)
+
+            brain_vector = np.array(sub_data)                           # Convert list to Numpy array
+
+            # Read in PINES map, resample, and vectorize
+            pines = self.load_PINES_signature()
+            pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
+
+            # Return array of dot products - represents 
+            return np.dot(brain_vector, pines_flat)
