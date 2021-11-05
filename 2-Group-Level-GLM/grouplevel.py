@@ -63,18 +63,18 @@ class GroupLevel:
       def _taskfile_validator(self):
             """
             Confirms the existence of the following files at the same directory level:
-                  * scp_subject_information.json
-                  * scp_task_information.json
+                  * subject_information.json
+                  * task_information.json
             """
 
-            target_files = ['./scp_subject_information.json',
-                            './scp_task_information.json']
+            target_files = ['./subject_information.json',
+                            './task_information.json']
 
             for target in target_files:
                   if not os.path.exists(target):
                         raise OSError(f"{target} not found in current directory")
 
-            with open('./scp_task_information.json') as incoming:
+            with open('./task_information.json') as incoming:
                   info = json.load(incoming)                            # Read JSON as dictionary
                   reduced = info[self.task]                             # Reduce to task-specific information
 
@@ -165,9 +165,17 @@ class GroupLevel:
                   output = []
 
                   for dir in [conditions, contrasts]:
-                        temp = os.listdir(dir)
-                        temp = [os.path.join(dir, x) for x in temp]
+                        temp = [os.path.join(dir, x) for x in os.listdir(dir)]
                         output += temp
+
+                  if os.path.exists(os.path.join(base, sub, f"task-{self.task}/alt")):
+                        alt_dir = os.path.join(base, sub, f"task-{self.task}", "alt/first-level-model")
+                        alt_conditions = os.path.join(alt_dir, "condition-maps")
+                        alt_contrasts = os.path.join(alt_dir, "contrast-maps")
+
+                        for dir in [alt_conditions, alt_contrasts]:
+                              temp = [os.path.join(dir, x) for x in os.listdir(dir)]
+                              output += temp
 
                   data[sub] = output
 
@@ -214,7 +222,7 @@ class GroupLevel:
             from nilearn.glm.second_level import make_second_level_design_matrix
 
             # Read in subject data from Networks survey
-            with open('./scp_subject_information.json') as incoming:
+            with open('./subject_information.json') as incoming:
                   scp_subjects = json.load(incoming)
 
             # Task specific information
@@ -427,32 +435,76 @@ class GroupLevel:
             return image.resample_to_img(target_img, template)
 
 
-      def estimate_PINES_signature(self, contrast):
+      def estimate_PINES_signature(self, contrast, group_level=True, sub_id=None):
             """
             contrast => Contrast of interest that we want to compare to PINES signature
+            subject_level => Boolean, determines if you will run PINES estimation on whole sample or single sub
 
             Vectorizes brain data from a given task and calculates dot product with PINES signature vector
             """
 
-            brain_data = self.get_brain_data(contrast=contrast)         # List of relative paths to NifTi files
-            sub_data = []                                               # Empty list to append into, will convert to array
+            if group_level:
+                  """
+                  This method calculates PINES expression on a list of subjects NifTi images
+                  """
 
-            print("Vectorizing brain maps...\n")
+                  # List of relative paths to NifTi files
+                  brain_data = self.get_brain_data(contrast=contrast) 
 
-            for sub in tqdm(brain_data):
-                  test_img = image.load_img(sub)                        # Convert Path to NifTi image
+                  # Empty list to append into, will convert to array
+                  sub_data = []                                           
 
-                  # Resample to MNI152 and vectorize voxels into array
+                  print("Vectorizing brain maps...\n")
+
+                  for sub in tqdm(brain_data):
+                        # Convert Path to NifTi image
+                        test_img = image.load_img(sub)               
+
+                        # Resample to MNI152 and vectorize voxels into array
+                        test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
+                        
+                        # Add voxels to master array
+                        sub_data.append(test_resample)
+
+                  # Convert list to Numpy array
+                  brain_vector = np.array(sub_data)                           
+
+                  # Read in PINES map, resample, and vectorize
+                  pines = self.load_PINES_signature()
+                  pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
+
+                  # Return array of dot products - represents negative emotion expression in 
+                  return np.dot(brain_vector, pines_flat)
+
+            else:
+                  """
+                  This method calculates PINES expression on a single subject's NifTi image
+                  """
+
+                  # Ensure end user has set value for sub_id parameter
+                  if sub_id == None:
+                        raise ValueError(f"Subject ID must be set prior to running this function: currently {sub_id}")
+
+                  # List of relative paths to NifTi files (should just be one per subject)
+                  brain_data = [x for x in self.get_brain_data(contrast=contrast) if sub_id in x]
+
+                  # Catch any duplicates and alert end user
+                  if len(brain_data) > 1:
+                        print([x.split('/')[-1] for x in brain_data])
+                        raise ValueError("Ack! We should only see one map per subject")
+
+                  # Convert to NifTi image
+                  test_img = image.load_img(brain_data[0])
+
+                  # Resample to template and vectorize              
                   test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
                   
-                  # Add voxels to master array
-                  sub_data.append(test_resample)
+                  # Vectorize neural data to NP array
+                  brain_vector = np.array(test_resample)
 
-            brain_vector = np.array(sub_data)                           # Convert list to Numpy array
+                  # Read in PINES map, resample, and vectorize                      
+                  pines = self.load_PINES_signature()                         
+                  pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
 
-            # Read in PINES map, resample, and vectorize
-            pines = self.load_PINES_signature()
-            pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
-
-            # Return array of dot products - represents 
-            return np.dot(brain_vector, pines_flat)
+                  # Return array of dot products
+                  return np.dot(brain_vector, pines_flat)
