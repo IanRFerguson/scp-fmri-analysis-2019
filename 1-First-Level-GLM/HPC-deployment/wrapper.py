@@ -16,5 +16,6 @@ import sys
 task_name = sys.argv[1]
 sub_id = sys.argv[2]
 
-sub = SCP_Sub(sub_id, task_name)
-sub.run_first_level_glm()
+for smooth in [4., 8.]:
+      sub = SCP_Sub(sub_id, task_name)
+      sub.run_first_level_glm(smoothing=smooth)
