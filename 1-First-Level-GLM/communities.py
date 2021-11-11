@@ -15,7 +15,6 @@ RUNNING TO-DO LIST
 """
 
 import warnings
-from nilearn.glm.first_level import design_matrix
 warnings.filterwarnings('ignore')
 
 import pandas as pd
@@ -33,7 +32,7 @@ import nilearn.plotting as nip
 
 class SCP_Sub(Subject):
       
-      def __init__(self, subID, task, suppress=True):
+      def __init__(self, subID, task, suppress=True, alternative_model=False):
             """
             At initialization, the following operations are performed:
 
@@ -42,8 +41,9 @@ class SCP_Sub(Subject):
             """
 
             Subject.__init__(self, subID, task, suppress=suppress)
+            self.alt_model = alternative_model
             task_info = self._taskfile_validator()                      # Ensures that neccesary JSON files exist
-            output = self._nipype_output_directories()                  # Creates
+            output = self._nipype_output_directories()                  # Creates output directories
 
             self.conditions = task_info['conditions']                   # In-scanner conditions
             self.tr = task_info['tr']                                   # Repetition time
@@ -59,29 +59,34 @@ class SCP_Sub(Subject):
             self.nilearn_plotting_condition = output[2]
             self.nilearn_plotting_contrasts = output[3]
 
+            if self.alt_model:
+                  self.first_level_output = os.path.join(self.first_level_output, 'alt')
+
 
       # -------- FIRST-LEVEL GLM
 
       def _taskfile_validator(self):
             """
             Confirms the existence of the following files at the same directory level:
-                  * scp_subject_information.json
-                  * scp_task_information.json
+                  * subject_information.json
+                  * task_information.json
             """
 
             import json
-            target_files = ['./scp_subject_information.json',
-                            './scp_task_information.json']
+            target_files = ['./subject_information.json',
+                            './task_information.json']
 
             for target in target_files:
                   if not os.path.exists(target):
                         raise OSError(f"{target} not found in current directory")
 
-            with open('./scp_task_information.json') as incoming:
+            with open('./task_information.json') as incoming:
                   info = json.load(incoming)                            # Read JSON as dictionary
-                  reduced = info[self.task]                             # Reduce to task-specific information
-
-                  return reduced
+            
+            if self.alt_model:
+                  return info[f"{self.task}_alt"]
+            else:
+                  return info[self.task]
 
 
       def _nipype_output_directories(self):
@@ -102,6 +107,9 @@ class SCP_Sub(Subject):
                   # For brain maps (visualizations)
                   'plotting/condition-maps',
                   'plotting/contrast-maps']
+
+            if self.alt_model:
+                  subdirs = [f"alt/{x}" for x in subdirs]
 
             keepers = []                                                # Container to return
 
@@ -216,7 +224,7 @@ class SCP_Sub(Subject):
             if "trial_type" in list(base_events.columns):
                   voi = voi + ['trial_type']
 
-            base_events = base_events.loc[:, voi]
+            base_events = base_events.loc[:, set(voi)]
 
             # Merge events with number of TRs
             events = empty_events.merge(base_events, on='onset', how='left')
@@ -237,7 +245,7 @@ class SCP_Sub(Subject):
                                     end -= 1
 
             if len(self.network_regressors) > 0:
-                  with open('./scp_subject_information.json') as incoming:
+                  with open('./subject_information.json') as incoming:
                         networks = json.load(incoming)
                         
                         def iso_value(x, var):
@@ -280,7 +288,7 @@ class SCP_Sub(Subject):
             Returns list of matrix objects
             """
 
-            with open('./scp_task_information.json') as incoming:
+            with open('./task_information.json') as incoming:
                   networks = json.load(incoming)[self.task]             # Read in task information as a dictionary
 
 
@@ -430,7 +438,7 @@ class SCP_Sub(Subject):
             Returns list of design matrices
             """
 
-            with open('./scp_task_information.json') as incoming:
+            with open('./task_information.json') as incoming:
                   networks = json.load(incoming)[self.task]
 
             def generate_matrices(run):
@@ -462,7 +470,7 @@ class SCP_Sub(Subject):
 
                   """
                   Nilearn doesn't accept NA's in confound regressors
-                  We'll mean impute any missing datat here
+                  We'll mean impute any missing data here
                   """
 
                   # Empty dictionary to hold key:value pairs
@@ -607,8 +615,11 @@ class SCP_Sub(Subject):
             """
 
             # Read in task-specific parameters from external JSON file
-            with open('./scp_task_information.json') as incoming:
-                  networks = json.load(incoming)[self.task]
+            with open('./task_information.json') as incoming:
+                  if self.alt_model:
+                        networks = json.load(incoming)[f"{self.task}_alt"]
+                  else:
+                        networks = json.load(incoming)[self.task]
 
             # If user defined contrasts don't exist, derive them
             if networks['design-contrasts'] == 'default':

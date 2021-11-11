@@ -12,6 +12,7 @@ import warnings, os, json, pathlib
 warnings.filterwarnings('ignore')
 
 import pandas as pd
+import numpy as np
 from tqdm import tqdm
 from nilearn.glm import second_level, threshold_stats_img
 import nilearn.plotting as nip
@@ -45,11 +46,12 @@ class GroupLevel:
             self._output_directory()                                    # Create relevant output dirs
 
             if complete_BIDS:
-                self.subjects = self._iso_BIDS_subjects()
+                  self.subjects = self._iso_BIDS_subjects()
             else:
                   self.subjects = self._iso_subjects()
 
             self.all_brain_data = self._brain_data()                    # List of ALL NifTi's
+            self.available_contrasts = self._available_contrasts()      # List of contrasts available for analysis
             self.task_file = self._taskfile_validator()                 # Confirms presence of JSON info files
             
             self.group_regressors = self.task_file['group-level-regressors']
@@ -62,18 +64,18 @@ class GroupLevel:
       def _taskfile_validator(self):
             """
             Confirms the existence of the following files at the same directory level:
-                  * scp_subject_information.json
-                  * scp_task_information.json
+                  * subject_information.json
+                  * task_information.json
             """
 
-            target_files = ['./scp_subject_information.json',
-                            './scp_task_information.json']
+            target_files = ['./subject_information.json',
+                            './task_information.json']
 
             for target in target_files:
                   if not os.path.exists(target):
                         raise OSError(f"{target} not found in current directory")
 
-            with open('./scp_task_information.json') as incoming:
+            with open('./task_information.json') as incoming:
                   info = json.load(incoming)                            # Read JSON as dictionary
                   reduced = info[self.task]                             # Reduce to task-specific information
 
@@ -82,7 +84,6 @@ class GroupLevel:
 
       def _output_directory(self):
             """
-            Runs at __init__
             Creates second-level subdirectories in derivatives if they don't exist
             """
 
@@ -164,13 +165,38 @@ class GroupLevel:
                   output = []
 
                   for dir in [conditions, contrasts]:
-                        temp = os.listdir(dir)
-                        temp = [os.path.join(dir, x) for x in temp]
+                        temp = [os.path.join(dir, x) for x in os.listdir(dir)]
                         output += temp
+
+                  if os.path.exists(os.path.join(base, sub, f"task-{self.task}/alt")):
+                        alt_dir = os.path.join(base, sub, f"task-{self.task}", "alt/first-level-model")
+                        alt_conditions = os.path.join(alt_dir, "condition-maps")
+                        alt_contrasts = os.path.join(alt_dir, "contrast-maps")
+
+                        for dir in [alt_conditions, alt_contrasts]:
+                              temp = [os.path.join(dir, x) for x in os.listdir(dir)]
+                              output += temp
 
                   data[sub] = output
 
             return data
+
+
+      def _available_contrasts(self):
+            """
+            Returns dictionary of conditions and contrasts derived from first-level output
+            """
+
+            output = {'conditions': [], 'contrasts':[]}
+
+            all_data = self.all_brain_data
+            iso_id = list(all_data.keys())[0] 
+            all_data = [x.split('/')[-1][10:].split('.nii.gz')[0] for x in all_data[iso_id]]
+
+            output['conditions'] = [x.split('condition-')[1] for x in all_data if 'condition' in x]
+            output['contrasts'] = [x.split('contrast-')[1] for x in all_data if 'contrast' in x]
+
+            return output      
 
 
       def get_brain_data(self, contrast):
@@ -213,7 +239,7 @@ class GroupLevel:
             from nilearn.glm.second_level import make_second_level_design_matrix
 
             # Read in subject data from Networks survey
-            with open('./scp_subject_information.json') as incoming:
+            with open('./subject_information.json') as incoming:
                   scp_subjects = json.load(incoming)
 
             # Task specific information
@@ -244,18 +270,13 @@ class GroupLevel:
             return make_second_level_design_matrix(subjects_label, design_matrix)
 
 
-      def uncorrected_group_model(self, contrast, columns=[], smoothing=4., all_contrasts=True, model_output=False):
+      def uncorrected_group_model(self, contrast, columns=[], smoothing=4.):
             """
             contrast => baseline condition or contrast from first-level-model
             columns => regressors of interest to include in design matrix (defaults to ALL)
             smoothing => kernel to smooth brain regions during model fitting
-            all_contrasts => If True, models each design matrix column explicitly
-            model_output => Determines if a SecondLevelModel object will be returned
 
-            The following operations are performed:
-                  * SecondLevelModel object is instantiated and fit with contrast brain data
-                  * Uncorrected z_map is computed, visualized, and saved locally
-                  * Unocrrected model is returned
+            Returns intercept contrast from model
             """
 
             brain_data = self.get_brain_data(contrast=contrast)         # List of relevant NifTi maps
@@ -267,83 +288,35 @@ class GroupLevel:
 
                   design_matrix = design_matrix.loc[:, columns]         # Reduce design matrix if desired
 
-            for path in [self.nifti_output, self.plotting_output]:
-                  out = os.path.join(path, f"uncorrected/{contrast}")
-
-                  if not os.path.isdir(out):
-                        pathlib.Path(out).mkdir(exist_ok=True, parents=True)
-
             # Instantiate and fit a second-level model
             model = second_level.SecondLevelModel(smoothing_fwhm=smoothing).fit(brain_data, design_matrix=design_matrix)
 
-            if all_contrasts:
-                  for var in (design_matrix.columns):
-
-                        # Compute basic contrast with intercept
-                        z_map = model.compute_contrast(var, output_type="z_score")
-
-                        var = var.lower()
-
-                        # Define output file names
-                        nifti_filename = os.path.join(self.nifti_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_regressor-{var}.nii.gz")
-                        map_filename = os.path.join(self.plotting_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_regressor-{var}.png")
-
-                        TITLE = f"uncorrected-{contrast}-{var}"
-
-                        # Save NifTi and brain map
-                        z_map.to_filename(nifti_filename)
-                        nip.plot_glass_brain(z_map, threshold=2.3, plot_abs=False, 
-                                          display_mode='lyrz', title=TITLE, output_file=map_filename)
-
-            everything = "+".join(design_matrix.columns)
-            z_map = model.compute_contrast(everything, output_type="z_score")
-
-            nifti_filename = os.path.join(self.nifti_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_all-regressors.nii.gz")
-            map_filename = os.path.join(self.plotting_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_all-regressors.png")
-
-            z_map.to_filename(nifti_filename)
-            nip.plot_glass_brain(z_map, threshold=2.3, plot_abs=False, 
-                                 display_mode='lyrz', title=f"{contrast}_all-regressors", 
-                                 output_file=map_filename)
-
-            if model_output:
-                  return model
+            return model.compute_contrast('intercept')
 
 
-      def _batch_uncorrected_model(self, contrasts, columns=[], all_contrasts=False):
-            """
-            contrasts => List of valid contrasts to model
-            columns => Design matrix columns of interest, defaults to All
-            all_contrasts => Determines if all design matrix columns are modeled or not
-
-            Loops through user input contrasts and models contrast of interest
-            """
-
-            for test in contrasts:
-                  self.uncorrected_group_model(contrast=test, columns=columns, all_contrasts=all_contrasts)
-
-
-      def _basic_model(self, contrast):
+      def _basic_model(self, contrast, direction=1):
             """
             Mostly a developmental function...
             Runs a simple, intercept-only model on the specified contrast
             """
 
+            if direction not in [-1, 1]:
+                  raise ValueError(f"Invalid input {direction} ... must be 1 or -1")
+
             # List of absolute paths to NifTi files for the specified contrast
             brain_data = self.get_brain_data(contrast=contrast)
 
             # Intercept-only design matrix
-            dm = pd.DataFrame([1] * len(brain_data))
+            dm = pd.DataFrame([direction] * len(brain_data))
 
             # Instantiate + Fit second level mode
             model = second_level.SecondLevelModel(smoothing_fwhm=4.).fit(brain_data, design_matrix=dm)
             
             # Compute contrast on intercept column
-            z_map = model.compute_contrast(output_type="z_score")
-            return z_map
+            return model.compute_contrast(output_type="z_score")
 
 
-      def contrast_QA(self, contrast):
+      def contrast_QA(self, contrast, verbose=False):
             """
             contrast => Valid first-level contrast
 
@@ -364,18 +337,21 @@ class GroupLevel:
 
             # Print message for end user + return Pandas DataFrame object
             print(f"\nYou have {len(output['sub_id'])} valid contrasts eligible for second-level modeling...\n")
-            return pd.DataFrame(output).sort_values(by="sub_id").reset_index(drop=True)
+
+            if verbose:
+                  return pd.DataFrame(output).sort_values(by="sub_id").reset_index(drop=True)
 
 
 
       # ------- Multiple Comparisons and Analysis Tools
 
 
-      def one_sample_test(self, nifti, contrast, height_control="fpr", alpha=0.001, cluster_threshold=0, return_map=False):
+      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='glass', alpha=0.001, cluster_threshold=0, return_map=False):
             """
             nifti => z_map contrast computed from a SecondLevelModel object
             contrast => String used for title on plot
             height_control => False positive rate (FPR / FDR / Bonferroni)
+            plot_style => glass or stat
             alpha => Significance level
             cluster_threshold => Groups of connected voxels
             return_map => Kicks out significant voxels if you want to assign to a variable
@@ -388,8 +364,17 @@ class GroupLevel:
 
             # Plot output
             title = f"{contrast} @ {alpha}"
-            nip.plot_glass_brain(temp_map, threshold=temp_thresh, display_mode='lyrz',
-                                plot_abs=False, colorbar=False, title=title)
+
+            if plot_style == 'glass':
+                  nip.plot_glass_brain(temp_map, threshold=temp_thresh, display_mode='lyrz',
+                                    plot_abs=False, colorbar=False, title=title)
+
+            elif plot_style == 'stat':
+                  nip.plot_stat_map(temp_map, threshold=temp_thresh, title=title,
+                                    display_mode='mosaic')
+
+            else:
+                  raise ValueError(f"Check your plot_style parameter, {plot_style} not in ['glass', 'stat']")
 
             if return_map:
                   return temp_map
@@ -413,6 +398,8 @@ class GroupLevel:
 
       def resample_to_MNI152(self, target_img):
             """
+            target_img => NifTi image that we want to resample
+
             Helper function to convert target image dimensionality to MNI152 template
             """
 
@@ -420,3 +407,78 @@ class GroupLevel:
             template = load_mni152_template()                           
 
             return image.resample_to_img(target_img, template)
+
+
+      def estimate_PINES_signature(self, contrast, group_level=True, sub_id=None):
+            """
+            contrast => Contrast of interest that we want to compare to PINES signature
+            subject_level => Boolean, determines if you will run PINES estimation on whole sample or single sub
+
+            Vectorizes brain data from a given task and calculates dot product with PINES signature vector
+            """
+
+            if group_level:
+                  """
+                  This method calculates PINES expression on a list of subjects NifTi images
+                  """
+
+                  # List of relative paths to NifTi files
+                  brain_data = self.get_brain_data(contrast=contrast) 
+
+                  # Empty list to append into, will convert to array
+                  sub_data = []                                           
+
+                  print("Vectorizing brain maps...\n")
+
+                  for sub in tqdm(brain_data):
+                        # Convert Path to NifTi image
+                        test_img = image.load_img(sub)               
+
+                        # Resample to MNI152 and vectorize voxels into array
+                        test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
+                        
+                        # Add voxels to master array
+                        sub_data.append(test_resample)
+
+                  # Convert list to Numpy array
+                  brain_vector = np.array(sub_data)                           
+
+                  # Read in PINES map, resample, and vectorize
+                  pines = self.load_PINES_signature()
+                  pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
+
+                  # Return array of dot products - represents negative emotion expression in 
+                  return np.dot(brain_vector, pines_flat)
+
+            else:
+                  """
+                  This method calculates PINES expression on a single subject's NifTi image
+                  """
+
+                  # Ensure end user has set value for sub_id parameter
+                  if sub_id == None:
+                        raise ValueError(f"Subject ID must be set prior to running this function: currently {sub_id}")
+
+                  # List of relative paths to NifTi files (should just be one per subject)
+                  brain_data = [x for x in self.get_brain_data(contrast=contrast) if sub_id in x]
+
+                  # Catch any duplicates and alert end user
+                  if len(brain_data) > 1:
+                        print([x.split('/')[-1] for x in brain_data])
+                        raise ValueError("Ack! We should only see one map per subject")
+
+                  # Convert to NifTi image
+                  test_img = image.load_img(brain_data[0])
+
+                  # Resample to template and vectorize              
+                  test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
+                  
+                  # Vectorize neural data to NP array
+                  brain_vector = np.array(test_resample)
+
+                  # Read in PINES map, resample, and vectorize                      
+                  pines = self.load_PINES_signature()                         
+                  pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
+
+                  # Return array of dot products
+                  return np.dot(brain_vector, pines_flat)
