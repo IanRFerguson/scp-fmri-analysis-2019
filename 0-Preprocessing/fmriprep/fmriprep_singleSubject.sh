@@ -5,7 +5,7 @@
 #
 # Ian Richard Ferguson | Stanford University
 
-# ------------------------ User variables -----------------------
+# ------------------------ User Variables
 
 SUBJ=$1                                                                         # Read in from command line
 THREADS=16
@@ -19,7 +19,7 @@ TFLOW="$HOME/.cache/templateflow"                                               
 mkdir -p $TFLOW                                                                 # Make templateflow dir if it doesn't exist
 
 
-# ----------------------- Script --------------------------------
+# ------------------------ Run Singularity
 
 singularity run --home $HOME --cleanenv $IMAGE          \
   $BIDS_ROOT $BIDS_ROOT/derivatives                     \
@@ -27,7 +27,9 @@ singularity run --home $HOME --cleanenv $IMAGE          \
   --participant-label $SUBJ                             \
   --md-only-boilerplate                                 \
   --fs-license-file $SURFER                             \
-  --output-spaces MNI152NLin2009cAsym:res-2             \
+  --output-spaces                                       \
+      MNI152NLin2009cAsym:res-2                         \
+      MNI152NLin6Asym:res-2                             \
   --nthreads $THREADS                                   \
   --stop-on-first-crash                                 \
   --mem_mb $MEM                                         \
