@@ -46,11 +46,12 @@ class GroupLevel:
             self._output_directory()                                    # Create relevant output dirs
 
             if complete_BIDS:
-                self.subjects = self._iso_BIDS_subjects()
+                  self.subjects = self._iso_BIDS_subjects()
             else:
                   self.subjects = self._iso_subjects()
 
             self.all_brain_data = self._brain_data()                    # List of ALL NifTi's
+            self.available_contrasts = self._available_contrasts()      # List of contrasts available for analysis
             self.task_file = self._taskfile_validator()                 # Confirms presence of JSON info files
             
             self.group_regressors = self.task_file['group-level-regressors']
@@ -83,7 +84,6 @@ class GroupLevel:
 
       def _output_directory(self):
             """
-            Runs at __init__
             Creates second-level subdirectories in derivatives if they don't exist
             """
 
@@ -182,6 +182,23 @@ class GroupLevel:
             return data
 
 
+      def _available_contrasts(self):
+            """
+            Returns dictionary of conditions and contrasts derived from first-level output
+            """
+
+            output = {'conditions': [], 'contrasts':[]}
+
+            all_data = self.all_brain_data
+            iso_id = list(all_data.keys())[0] 
+            all_data = [x.split('/')[-1][10:].split('.nii.gz')[0] for x in all_data[iso_id]]
+
+            output['conditions'] = [x.split('condition-')[1] for x in all_data if 'condition' in x]
+            output['contrasts'] = [x.split('contrast-')[1] for x in all_data if 'contrast' in x]
+
+            return output      
+
+
       def get_brain_data(self, contrast):
             """
             contrast => Used to isolate relevant NifTi files for group-level analysis
@@ -253,18 +270,13 @@ class GroupLevel:
             return make_second_level_design_matrix(subjects_label, design_matrix)
 
 
-      def uncorrected_group_model(self, contrast, columns=[], smoothing=4., all_contrasts=True, model_output=False):
+      def uncorrected_group_model(self, contrast, columns=[], smoothing=4.):
             """
             contrast => baseline condition or contrast from first-level-model
             columns => regressors of interest to include in design matrix (defaults to ALL)
             smoothing => kernel to smooth brain regions during model fitting
-            all_contrasts => If True, models each design matrix column explicitly
-            model_output => Determines if a SecondLevelModel object will be returned
 
-            The following operations are performed:
-                  * SecondLevelModel object is instantiated and fit with contrast brain data
-                  * Uncorrected z_map is computed, visualized, and saved locally
-                  * Unocrrected model is returned
+            Returns intercept contrast from model
             """
 
             brain_data = self.get_brain_data(contrast=contrast)         # List of relevant NifTi maps
@@ -276,80 +288,32 @@ class GroupLevel:
 
                   design_matrix = design_matrix.loc[:, columns]         # Reduce design matrix if desired
 
-            for path in [self.nifti_output, self.plotting_output]:
-                  out = os.path.join(path, f"uncorrected/{contrast}")
-
-                  if not os.path.isdir(out):
-                        pathlib.Path(out).mkdir(exist_ok=True, parents=True)
-
             # Instantiate and fit a second-level model
             model = second_level.SecondLevelModel(smoothing_fwhm=smoothing).fit(brain_data, design_matrix=design_matrix)
 
-            if all_contrasts:
-                  for var in (design_matrix.columns):
-
-                        # Compute basic contrast with intercept
-                        z_map = model.compute_contrast(var, output_type="z_score")
-
-                        var = var.lower()
-
-                        # Define output file names
-                        nifti_filename = os.path.join(self.nifti_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_regressor-{var}.nii.gz")
-                        map_filename = os.path.join(self.plotting_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_regressor-{var}.png")
-
-                        TITLE = f"uncorrected-{contrast}-{var}"
-
-                        # Save NifTi and brain map
-                        z_map.to_filename(nifti_filename)
-                        nip.plot_glass_brain(z_map, threshold=2.3, plot_abs=False, 
-                                          display_mode='lyrz', title=TITLE, output_file=map_filename)
-
-            everything = "+".join(design_matrix.columns)
-            z_map = model.compute_contrast(everything, output_type="z_score")
-
-            nifti_filename = os.path.join(self.nifti_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_all-regressors.nii.gz")
-            map_filename = os.path.join(self.plotting_output, f"uncorrected/{contrast}/second-level_uncorrected_contrast-{contrast}_all-regressors.png")
-
-            z_map.to_filename(nifti_filename)
-            nip.plot_glass_brain(z_map, threshold=2.3, plot_abs=False, 
-                                 display_mode='lyrz', title=f"{contrast}_all-regressors", 
-                                 output_file=map_filename)
-
-            if model_output:
-                  return model
+            return model.compute_contrast('intercept')
 
 
-      def _batch_uncorrected_model(self, contrasts, columns=[], all_contrasts=False):
-            """
-            contrasts => List of valid contrasts to model
-            columns => Design matrix columns of interest, defaults to All
-            all_contrasts => Determines if all design matrix columns are modeled or not
-
-            Loops through user input contrasts and models contrast of interest
-            """
-
-            for test in contrasts:
-                  self.uncorrected_group_model(contrast=test, columns=columns, all_contrasts=all_contrasts)
-
-
-      def _basic_model(self, contrast):
+      def _basic_model(self, contrast, direction=1):
             """
             Mostly a developmental function...
             Runs a simple, intercept-only model on the specified contrast
             """
 
+            if direction not in [-1, 1]:
+                  raise ValueError(f"Invalid input {direction} ... must be 1 or -1")
+
             # List of absolute paths to NifTi files for the specified contrast
             brain_data = self.get_brain_data(contrast=contrast)
 
             # Intercept-only design matrix
-            dm = pd.DataFrame([1] * len(brain_data))
+            dm = pd.DataFrame([direction] * len(brain_data))
 
             # Instantiate + Fit second level mode
             model = second_level.SecondLevelModel(smoothing_fwhm=4.).fit(brain_data, design_matrix=dm)
             
             # Compute contrast on intercept column
-            z_map = model.compute_contrast(output_type="z_score")
-            return z_map
+            return model.compute_contrast(output_type="z_score")
 
 
       def contrast_QA(self, contrast, verbose=False):
@@ -382,11 +346,12 @@ class GroupLevel:
       # ------- Multiple Comparisons and Analysis Tools
 
 
-      def one_sample_test(self, nifti, contrast, height_control="fpr", alpha=0.001, cluster_threshold=0, return_map=False):
+      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='glass', alpha=0.001, cluster_threshold=0, return_map=False):
             """
             nifti => z_map contrast computed from a SecondLevelModel object
             contrast => String used for title on plot
             height_control => False positive rate (FPR / FDR / Bonferroni)
+            plot_style => glass or stat
             alpha => Significance level
             cluster_threshold => Groups of connected voxels
             return_map => Kicks out significant voxels if you want to assign to a variable
@@ -399,8 +364,17 @@ class GroupLevel:
 
             # Plot output
             title = f"{contrast} @ {alpha}"
-            nip.plot_glass_brain(temp_map, threshold=temp_thresh, display_mode='lyrz',
-                                plot_abs=False, colorbar=False, title=title)
+
+            if plot_style == 'glass':
+                  nip.plot_glass_brain(temp_map, threshold=temp_thresh, display_mode='lyrz',
+                                    plot_abs=False, colorbar=False, title=title)
+
+            elif plot_style == 'stat':
+                  nip.plot_stat_map(temp_map, threshold=temp_thresh, title=title,
+                                    display_mode='mosaic')
+
+            else:
+                  raise ValueError(f"Check your plot_style parameter, {plot_style} not in ['glass', 'stat']")
 
             if return_map:
                   return temp_map
