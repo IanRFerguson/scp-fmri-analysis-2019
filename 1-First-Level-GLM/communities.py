@@ -555,7 +555,7 @@ class SCP_Sub(Subject):
             return contrasts
 
 
-      def _run_contrast(self, glm, contrast, title, output_type):
+      def _run_contrast(self, glm, contrast, title, output_type, smoothing):
             """
             glm => FirstLevelModel object
             contrast => specific condition or contrast equation (e.g., high_trust - low_trust)
@@ -570,6 +570,7 @@ class SCP_Sub(Subject):
             """
             
             contrast = str(contrast).replace(' ', '').strip()
+            kernel = str(int(smoothing))
 
 
             # Relative paths for brain map visualizations
@@ -582,11 +583,11 @@ class SCP_Sub(Subject):
                   v_base = self.nilearn_plotting_contrasts
                   n_base = self.nilearn_first_level_contrasts
 
-            glass_output = f"{v_base}/glass/sub-{self.subID}_{output_type}-{title}_plot-glass-brain.png"
-            stat_output = f"{v_base}/stat/sub-{self.subID}_{output_type}-{title}_plot-stat-map.png"
-            report_output = f"{v_base}/summary/sub-{self.subID}_{output_type}-{title}_summary.html"
+            glass_output = f"{v_base}/glass/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-glass-brain.png"
+            stat_output = f"{v_base}/stat/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-stat-map.png"
+            report_output = f"{v_base}/summary/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_summary.html"
 
-            nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_z-map.nii.gz"
+            nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_z-map.nii.gz"
 
             # Compute the contrast itself
             z_map = glm.compute_contrast(contrast)
@@ -608,7 +609,7 @@ class SCP_Sub(Subject):
             z_map.to_filename(os.path.join(nifti_output))
                   
 
-      def firstLevel_contrasts(self, conditions=True):
+      def firstLevel_contrasts(self, conditions=True, smoothing=4.):
             """
             Runs FirstLevelModel via Nilearn GLM package
             If conditions=False then only pairwise trial_type contrasts are computed
@@ -635,7 +636,7 @@ class SCP_Sub(Subject):
                   
 
             # Scaffolding for model (HRF model and smoothing kernel)
-            glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=4., hrf_model='spm')
+            glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=smoothing, hrf_model='spm')
 
             print("\n--------- Fitting model, please hold...")
             # Fit data to model
@@ -645,20 +646,20 @@ class SCP_Sub(Subject):
             if conditions:
                   print("\n--------- Mapping condition z-scores\n")
                   for contrast in tqdm(self.conditions):
-                        self._run_contrast(glm=model, contrast=contrast, title=contrast, output_type="condition")
+                        self._run_contrast(glm=model, contrast=contrast, title=contrast, output_type="condition", smoothing=smoothing)
 
             # Contrasts will always be mapped
             print("\n--------- Mapping contrast z-scores\n")
             for k in tqdm(list(contrasts.keys())):
-                  self._run_contrast(glm=model, contrast=contrasts[k], title=k, output_type="contrast")
+                  self._run_contrast(glm=model, contrast=contrasts[k], title=k, output_type="contrast", smoothing=smoothing)
 
 
-      def run_first_level_glm(self, conditions=True):
+      def run_first_level_glm(self, conditions=True, smoothing=4.):
             """
             If conditions if False, baseline z-maps are not calculated
 
             This helper is technically extraneous but it wraps everything nicely, so why not
             """
 
-            self.firstLevel_contrasts(conditions=conditions)          
+            self.firstLevel_contrasts(conditions=conditions, smoothing=smoothing)          
             print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
