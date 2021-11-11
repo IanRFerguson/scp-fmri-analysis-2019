@@ -294,7 +294,7 @@ class GroupLevel:
             return model.compute_contrast('intercept')
 
 
-      def _basic_model(self, contrast, direction=1):
+      def _basic_model(self, contrast, smoothing=4., direction=1):
             """
             Mostly a developmental function...
             Runs a simple, intercept-only model on the specified contrast
@@ -310,7 +310,7 @@ class GroupLevel:
             dm = pd.DataFrame([direction] * len(brain_data))
 
             # Instantiate + Fit second level mode
-            model = second_level.SecondLevelModel(smoothing_fwhm=4.).fit(brain_data, design_matrix=dm)
+            model = second_level.SecondLevelModel(smoothing_fwhm=smoothing).fit(brain_data, design_matrix=dm)
             
             # Compute contrast on intercept column
             return model.compute_contrast(output_type="z_score")
