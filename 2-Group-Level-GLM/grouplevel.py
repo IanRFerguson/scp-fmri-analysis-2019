@@ -199,20 +199,25 @@ class GroupLevel:
             return output      
 
 
-      def get_brain_data(self, contrast):
+      def get_brain_data(self, contrast, smoothing="8mm"):
             """
             contrast => Used to isolate relevant NifTi files for group-level analysis
+            smoothing => String to match first-level smoothing kernel
 
             Returns a list of absolute paths to relevant NifTi files
             """
 
             output = []                                                 # Empty list to append into
 
+            if smoothing not in ["4mm", "8mm"]:
+                  raise ValueError("Smoothing kernel should be 4mm or 8mm")
+
             try:
                   for sub in self.subjects:                             # Checks list of NifTi's for each subject
                         for scan in self.all_brain_data[sub]:
                               if contrast in scan:
-                                    output.append(scan)                 # Add NifTi to list if contrast matches
+                                    if smoothing in scan:
+                                          output.append(scan)           # Add NifTi to list if contrast matches
 
             except:
                   raise ValueError(f"Your specfied contrast {contrast} not found in functional runs")
@@ -270,16 +275,21 @@ class GroupLevel:
             return make_second_level_design_matrix(subjects_label, design_matrix)
 
 
-      def uncorrected_group_model(self, contrast, columns=[], smoothing=4.):
+      def uncorrected_group_model(self, contrast, columns=[], smoothing=4., smooth_group=False):
             """
             contrast => baseline condition or contrast from first-level-model
             columns => regressors of interest to include in design matrix (defaults to ALL)
             smoothing => kernel to smooth brain regions during model fitting
+            smooth_group => Boolean, determines if smoothing kernel is applied to group model
 
             Returns intercept contrast from model
             """
 
-            brain_data = self.get_brain_data(contrast=contrast)         # List of relevant NifTi maps
+            format_smoothing = f"{int(smoothing)}mm"
+
+            brain_data = self.get_brain_data(contrast=contrast,         # List of relevant NifTi maps
+                                             smoothing=format_smoothing) 
+
             design_matrix = self.build_design_matrix()                  # Define design matrix with helper function
 
             if len(columns) > 0:
@@ -288,14 +298,24 @@ class GroupLevel:
 
                   design_matrix = design_matrix.loc[:, columns]         # Reduce design matrix if desired
 
+            if smooth_group:
+                  model_smoothing = smoothing
+            else:
+                  model_smoothing = None
+
             # Instantiate and fit a second-level model
-            model = second_level.SecondLevelModel(smoothing_fwhm=smoothing).fit(brain_data, design_matrix=design_matrix)
+            model = second_level.SecondLevelModel(smoothing_fwhm=model_smoothing).fit(brain_data, design_matrix=design_matrix)
 
             return model.compute_contrast('intercept')
 
 
-      def _basic_model(self, contrast, smoothing=4., direction=1):
+      def _basic_model(self, contrast, smoothing=8., direction=1, smooth_group=False):
             """
+            contrast => String pattern matching first-level model
+            smoothing => Float pattern matching first-level model
+            direction => 1 or -1, determines which contrast will be considered positive
+            smooth_group => Boolean, defaults to False. If True, group-level model is smoothed
+
             Mostly a developmental function...
             Runs a simple, intercept-only model on the specified contrast
             """
@@ -303,8 +323,15 @@ class GroupLevel:
             if direction not in [-1, 1]:
                   raise ValueError(f"Invalid input {direction} ... must be 1 or -1")
 
+            # E.g., 8. => "8mm"
+            format_smoothing = f"{int(smoothing)}mm"
+
+            # Apply no smoothing kernel to group-level model
+            if not smooth_group:
+                  smoothing = None
+
             # List of absolute paths to NifTi files for the specified contrast
-            brain_data = self.get_brain_data(contrast=contrast)
+            brain_data = self.get_brain_data(contrast=contrast, smoothing=format_smoothing)
 
             # Intercept-only design matrix
             dm = pd.DataFrame([direction] * len(brain_data))
@@ -316,16 +343,20 @@ class GroupLevel:
             return model.compute_contrast(output_type="z_score")
 
 
-      def contrast_QA(self, contrast, verbose=False):
+      def contrast_QA(self, contrast, verbose=False, smoothing=8.):
             """
             contrast => Valid first-level contrast
 
             Returns DataFrame object specifying quantity of contrasts and NifTi shapes for each contrast
             """
 
-            data = self.get_brain_data(contrast=contrast)               # List of relative paths to contrast maps
+            format_smoothing = f"{int(smoothing)}mm"
 
-            output = {'sub_id':[],                                      # Emtpy dictionary to append into
+            # List of relative paths to contrast maps
+            data = self.get_brain_data(contrast=contrast, smoothing=format_smoothing)               
+
+            # Emtpy dictionary to append into
+            output = {'sub_id':[],                                      
                       'path_to_nifti':[],
                       'shape':[]}
 
@@ -409,10 +440,12 @@ class GroupLevel:
             return image.resample_to_img(target_img, template)
 
 
-      def estimate_PINES_signature(self, contrast, group_level=True, sub_id=None):
+      def estimate_PINES_signature(self, contrast, smoothing=8., group_level=True, sub_id=None):
             """
             contrast => Contrast of interest that we want to compare to PINES signature
-            subject_level => Boolean, determines if you will run PINES estimation on whole sample or single sub
+            smoothing => Specifies which z-map to grab (we have 4mm and 8mm smoothing kernels)
+            group_level => Boolean, determines if you will run PINES estimation on whole sample or single sub
+            sub_id => Applicable when not `group_level`
 
             Vectorizes brain data from a given task and calculates dot product with PINES signature vector
             """
@@ -422,8 +455,11 @@ class GroupLevel:
                   This method calculates PINES expression on a list of subjects NifTi images
                   """
 
+                  # E.g., 8. => "8mm"
+                  format_smoothing = f"{int(smoothing)}mm"
+
                   # List of relative paths to NifTi files
-                  brain_data = self.get_brain_data(contrast=contrast) 
+                  brain_data = self.get_brain_data(contrast=contrast, smoothing=format_smoothing) 
 
                   # Empty list to append into, will convert to array
                   sub_data = []                                           
@@ -435,7 +471,7 @@ class GroupLevel:
                         test_img = image.load_img(sub)               
 
                         # Resample to MNI152 and vectorize voxels into array
-                        test_resample = self.resample_to_MNI152(test_img).get_fdata().flatten()
+                        test_resample = test_img.get_fdata().flatten()
                         
                         # Add voxels to master array
                         sub_data.append(test_resample)
@@ -445,7 +481,7 @@ class GroupLevel:
 
                   # Read in PINES map, resample, and vectorize
                   pines = self.load_PINES_signature()
-                  pines_flat = self.resample_to_MNI152(pines).get_fdata().flatten()
+                  pines_flat = pines.get_fdata().flatten()
 
                   # Return array of dot products - represents negative emotion expression in 
                   return np.dot(brain_vector, pines_flat)
