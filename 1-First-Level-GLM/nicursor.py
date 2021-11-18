@@ -37,7 +37,7 @@ valid_tasks = layout.get_tasks()
 
 # Object Definition
 class Subject:
-      def __init__(self, subID, task, suppress=True):
+      def __init__(self, subID, task, suppress=True, input_space="MNI152NLin2009"):
 
             # ---- Gloabl
             if subID in valid_subjects:
@@ -59,6 +59,7 @@ class Subject:
             self.events = self._pathToEvents()                          # TSV event onsets
 
             # ---- Derivatives
+            self._set_input_space(input_val=input_space)
             self.dummy_scans = [2] * len(self.nifti)                    # Hard-coded but changeable
             self.confounds = self._pathToConfounds()                    # TSV confound timeseries
             self.preprocessed = self._pathToPreprocessed()              # Preprocessed NifTi Files (ALL)
@@ -81,6 +82,7 @@ class Subject:
             container = {"Subject ID": self.subID,
                         "Task": self.task,
                         "# of Functional Runs": len(self.nifti),
+                        "Template Space": self.template_space,
                         "Functional Runs": self.nifti,
                         "Path to Output Directory": self.first_level_output}
 
@@ -236,6 +238,20 @@ class Subject:
 
       # -------- PREPROCESSED BRAIN DATA
 
+      def _set_input_space(self, input_val):
+            """
+            Confirms that user enters valid template space
+
+            If True, returns input value as template space
+            """
+
+            if input_val not in ['MNI152NLin2009', 'MNI152NLin6']:
+                raise ValueError(f"""{input_val} is invalid template space ... 
+                                    should be 'MNI152NLin2009' or 'MNI152NLin6'""")
+
+            self.template_space = input_val
+
+
       def set_dummyScans(self, LIST):
             """
             Updates # of dummy scans (default=2)
@@ -280,7 +296,7 @@ class Subject:
             List of preprocessed BOLD runs only (i.e., no masks)
             """
 
-            return [x for x in self.preprocessed if 'desc-preproc_bold' in x]
+            return [x for x in self.preprocessed if 'desc-preproc_bold' in x if self.template_space in x]
 
 
       def _getBrainMask(self):
