@@ -32,7 +32,7 @@ import nilearn.plotting as nip
 
 class SCP_Sub(Subject):
       
-      def __init__(self, subID, task, suppress=True, alternative_model=False):
+      def __init__(self, subID, task, suppress=True, alternative_model=False, input_space="MNI152NLin2009"):
             """
             At initialization, the following operations are performed:
 
@@ -40,7 +40,7 @@ class SCP_Sub(Subject):
             * task_information JSON fill is read in and values assigned to attributes 
             """
 
-            Subject.__init__(self, subID, task, suppress=suppress)
+            Subject.__init__(self, subID, task, suppress=suppress, input_space=input_space)
             self.alt_model = alternative_model
             task_info = self._taskfile_validator()                      # Ensures that neccesary JSON files exist
             output = self._nipype_output_directories()                  # Creates output directories
