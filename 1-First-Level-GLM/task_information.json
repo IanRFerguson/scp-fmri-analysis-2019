@@ -1,5 +1,4 @@
-{
-    "faces": {
+{"faces": {
         "conditions": [
             "nondorm",
             "dorm",
@@ -17,10 +16,7 @@
             "rot_z",
             "white_matter"
         ],
-        "network_regressors": [
-            "indegree_CloseFrds_fa18",
-            "Need_Belong"
-        ],
+        "network_regressors": [],
         "block_regressors": [],
         "trial_type": "condition",
         "tr": 1.0,
@@ -33,8 +29,7 @@
             "05061"
         ],
         "design-contrasts": {
-            "dorm-membership": "dorm-membership",
-            "indegree": "indegree_CloseFrds_fa18"
+            "dorm-membership": "dorm-membership"
         },
         "design-type": "event",
         "group-level-regressors": [
@@ -68,9 +63,7 @@
             "rot_z",
             "white_matter"
         ],
-        "network_regressors": [
-            "indegree_CloseFrds_fa18"
-        ],
+        "network_regressors": [],
         "block_regressors": [
             "fixation",
             "memory",
@@ -86,27 +79,24 @@
             "02013",
             "05021",
             "05032",
-            "05036"
+            "05036",
+            "02060",
+            "02093",
+            "02039"
         ],
         "design-contrasts": {
-            "highlow_v_self": "(high_trust_perspective + low_trust_perspective) - self_perspective",
             "perspective_high_self": "high_trust_perspective - self_perspective",
             "perspective_low_self": "low_trust_perspective - self_perspective",
             "perspective_high_low": "high_trust_perspective - low_trust_perspective",
             "memory_perspective_self": "self_memory - self_perspective",
             "memory_perspective_high": "high_trust_memory - high_trust_perspective",
             "memory_perspective_low": "low_trust_memory - low_trust_perspective",
-            "active_baseline_self": "self_memory - self_spatial",
-            "active_baseline_high_trust": "high_trust_memory - high_trust_spatial",
-            "active_baseline_low_trust": "low_trust_memory - low_trust_spatial"
+            "memory_trust_target":"(high_trust_perspective - high_trust_memory) - (low_trust_perspective - low_trust_memory)",
+            "memory_trust_self_plus":"(high_trust_perspective - high_trust_memory) - (self_perspective - self_memory)",
+            "memory_trust_self_minus":"(high_trust_memory - high_trust_perspective) - (self_memory - self_perspective)"
         },
         "design-type": "block",
-        "group-level-regressors": [
-            "indegree_CloseFrds_fa18",
-            "outdegree_CloseFrds_fa18",
-            "Loneliness",
-            "STAI_Anxiety"
-        ]
+        "group-level-regressors": []
     },
     "socialeval": {
         "conditions": [
