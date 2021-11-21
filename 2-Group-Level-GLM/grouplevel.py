@@ -16,6 +16,7 @@ import numpy as np
 from tqdm import tqdm
 from nilearn.glm import second_level, threshold_stats_img
 import nilearn.plotting as nip
+import matplotlib.pyplot as plt
 from nilearn import image
 from bids.layout import BIDSLayout
 
@@ -199,6 +200,9 @@ class GroupLevel:
             return output      
 
 
+      # ------- Utility Functions
+
+
       def get_brain_data(self, contrast, smoothing="8mm"):
             """
             contrast => Used to isolate relevant NifTi files for group-level analysis
@@ -207,7 +211,8 @@ class GroupLevel:
             Returns a list of absolute paths to relevant NifTi files
             """
 
-            output = []                                                 # Empty list to append into
+            # Empty list to append into
+            output = []
 
             if smoothing not in ["4mm", "8mm"]:
                   raise ValueError("Smoothing kernel should be 4mm or 8mm")
@@ -220,15 +225,38 @@ class GroupLevel:
                                           output.append(scan)           # Add NifTi to list if contrast matches
 
             except:
-                  raise ValueError(f"Your specfied contrast {contrast} not found in functional runs")
+                  raise ValueError(
+                        f"Your specfied contrast {contrast} not found in functional runs")
 
             if len(output) == 0:
-                  raise ValueError(f"Your specified contrast {contrast} not found in functional runs")
-            
+                  raise ValueError(
+                        f"Your specified contrast {contrast} not found in functional runs")
+
             return output
 
 
-      # ------- Model Utilities
+      def brain_mosaic(self, contrast, smoothing=8.):
+            """
+            
+            """
+
+            brains = self.get_brain_data(contrast=contrast, 
+                                         smoothing=f"{int(smoothing)}mm")
+
+            figure, axes = plt.subplots(nrows=int(len(brains) / 5), ncols=5, figsize=(20,20))
+
+            for index, brain in enumerate(brains):
+
+                  sub_id = brain.split('/')[-1].split('_')[0].split('-')[1]
+
+                  k = nip.plot_glass_brain(brain, threshold=3., display_mode='z',
+                                           plot_abs=False, colorbar=False, title=sub_id,
+                                           axes=axes[int(index / 5), int(index % 5)])
+
+            plt.show()
+
+
+      # ------- Modeling
 
 
       def build_design_matrix(self):
@@ -274,6 +302,42 @@ class GroupLevel:
 
             return make_second_level_design_matrix(subjects_label, design_matrix)
 
+      def _basic_model(self, contrast, smoothing=8., direction=1, smooth_group=False):
+            """
+            contrast => String pattern matching first-level model
+            smoothing => Float pattern matching first-level model
+            direction => 1 or -1, determines which contrast will be considered positive
+            smooth_group => Boolean, defaults to False. If True, group-level model is smoothed
+
+            Mostly a developmental function...
+            Runs a simple, intercept-only model on the specified contrast
+            """
+
+            if direction not in [-1, 1]:
+                raise ValueError(
+                    f"Invalid input {direction} ... must be 1 or -1")
+
+            # E.g., 8. => "8mm"
+            format_smoothing = f"{int(smoothing)}mm"
+
+            # Apply no smoothing kernel to group-level model
+            if not smooth_group:
+                smoothing = None
+
+            # List of absolute paths to NifTi files for the specified contrast
+            brain_data = self.get_brain_data(
+                contrast=contrast, smoothing=format_smoothing)
+
+            # Intercept-only design matrix
+            dm = pd.DataFrame([direction] * len(brain_data))
+
+            # Instantiate + Fit second level mode
+            model = second_level.SecondLevelModel(
+                smoothing_fwhm=smoothing).fit(brain_data, design_matrix=dm)
+
+            # Compute contrast on intercept column
+            return model.compute_contrast(output_type="z_score")
+
 
       def uncorrected_group_model(self, contrast, columns=[], smoothing=4., smooth_group=False):
             """
@@ -309,40 +373,6 @@ class GroupLevel:
             return model.compute_contrast('intercept')
 
 
-      def _basic_model(self, contrast, smoothing=8., direction=1, smooth_group=False):
-            """
-            contrast => String pattern matching first-level model
-            smoothing => Float pattern matching first-level model
-            direction => 1 or -1, determines which contrast will be considered positive
-            smooth_group => Boolean, defaults to False. If True, group-level model is smoothed
-
-            Mostly a developmental function...
-            Runs a simple, intercept-only model on the specified contrast
-            """
-
-            if direction not in [-1, 1]:
-                  raise ValueError(f"Invalid input {direction} ... must be 1 or -1")
-
-            # E.g., 8. => "8mm"
-            format_smoothing = f"{int(smoothing)}mm"
-
-            # Apply no smoothing kernel to group-level model
-            if not smooth_group:
-                  smoothing = None
-
-            # List of absolute paths to NifTi files for the specified contrast
-            brain_data = self.get_brain_data(contrast=contrast, smoothing=format_smoothing)
-
-            # Intercept-only design matrix
-            dm = pd.DataFrame([direction] * len(brain_data))
-
-            # Instantiate + Fit second level mode
-            model = second_level.SecondLevelModel(smoothing_fwhm=smoothing).fit(brain_data, design_matrix=dm)
-            
-            # Compute contrast on intercept column
-            return model.compute_contrast(output_type="z_score")
-
-
       def contrast_QA(self, contrast, verbose=False, smoothing=8.):
             """
             contrast => Valid first-level contrast
@@ -373,11 +403,10 @@ class GroupLevel:
                   return pd.DataFrame(output).sort_values(by="sub_id").reset_index(drop=True)
 
 
-
       # ------- Multiple Comparisons and Analysis Tools
 
 
-      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='glass', alpha=0.001, cluster_threshold=0, return_map=False):
+      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='ortho', alpha=0.001, cluster_threshold=None, return_map=False):
             """
             nifti => z_map contrast computed from a SecondLevelModel object
             contrast => String used for title on plot
@@ -387,6 +416,9 @@ class GroupLevel:
             cluster_threshold => Groups of connected voxels
             return_map => Kicks out significant voxels if you want to assign to a variable
             """
+
+            if plot_style not in ['ortho', 'glass', 'mosaic']:
+                  raise ValueError(f"{plot_style} not in [ ortho, glass, mosaic ]")
 
             # Threshold map at the specified significance level
             temp_map, temp_thresh = threshold_stats_img(nifti, alpha=alpha, 
@@ -400,9 +432,13 @@ class GroupLevel:
                   nip.plot_glass_brain(temp_map, threshold=temp_thresh, display_mode='lyrz',
                                     plot_abs=False, colorbar=False, title=title)
 
-            elif plot_style == 'stat':
+            elif plot_style == 'mosaic':
                   nip.plot_stat_map(temp_map, threshold=temp_thresh, title=title,
                                     display_mode='mosaic')
+
+            elif plot_style == 'ortho':
+                  nip.plot_stat_map(temp_map, threshold=temp_thresh, display_mode='ortho',
+                                    draw_cross=False)
 
             else:
                   raise ValueError(f"Check your plot_style parameter, {plot_style} not in ['glass', 'stat']")
