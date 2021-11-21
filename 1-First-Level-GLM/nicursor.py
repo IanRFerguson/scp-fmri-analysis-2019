@@ -296,7 +296,17 @@ class Subject:
             List of preprocessed BOLD runs only (i.e., no masks)
             """
 
-            return [x for x in self.preprocessed if 'desc-preproc_bold' in x if self.template_space in x]
+            temp =  [x for x in self.preprocessed if 'desc-preproc_bold' in x if self.template_space in x]
+            ordered = []
+
+            for k in range(len(temp)):
+                  run = f"run-{k+1}"
+
+                  for bold in temp:
+                        if run in bold:
+                              ordered.append(bold)
+
+            return ordered
 
 
       def _getBrainMask(self):
