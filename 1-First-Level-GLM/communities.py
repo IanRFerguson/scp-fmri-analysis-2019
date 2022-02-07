@@ -8,10 +8,11 @@ Ian Richard Ferguson | Stanford University
 """
 
 """
-RUNNING TO-DO LIST
+TODO:
 
-* For long network regressors ... mean inpute or 0's
-* Adding network regressors to socialeval and stressbuffering task
+      * Collapse high and low (e.g., self vs. other)
+      * Try intensity instead of valence (rating AND delta)
+      * Contrasting with active baseline
 """
 
 import warnings
@@ -19,9 +20,7 @@ warnings.filterwarnings('ignore')
 
 import pandas as pd
 import numpy as np
-import os
-import json
-import pathlib
+import os, json, pathlib
 from tqdm import tqdm
 
 from nicursor import Subject
@@ -32,7 +31,7 @@ import nilearn.plotting as nip
 
 class SCP_Sub(Subject):
       
-      def __init__(self, subID, task, suppress=True, alternative_model=False, input_space="MNI152NLin2009"):
+      def __init__(self, subID, task, user='ian', suppress=True, alternative_model=False, input_space="MNI152NLin6", trim=False):
             """
             At initialization, the following operations are performed:
 
@@ -40,19 +39,27 @@ class SCP_Sub(Subject):
             * task_information JSON fill is read in and values assigned to attributes 
             """
 
-            Subject.__init__(self, subID, task, suppress=suppress, input_space=input_space)
+            Subject.__init__(self, subID, task, user, suppress=suppress, input_space=input_space)
             self.alt_model = alternative_model
             task_info = self._taskfile_validator()                      # Ensures that neccesary JSON files exist
             output = self._nipype_output_directories()                  # Creates output directories
 
-            self.conditions = task_info['conditions']                   # In-scanner conditions
-            self.tr = task_info['tr']                                   # Repetition time
-            self.confound_regressors = task_info['confound_regressors'] # Regressors to include from fmriprep
-            self.network_regressors = task_info['network_regressors']   # Regressors to include from SCP surveys
-            self.block_regressors = task_info['block_regressors']       # Within-block regressors (for block-design)
-            self.trial_type = task_info['trial_type']                   # Column in onsets file to split conditions on
-            self.contrasts = task_info['design-contrasts']              # Weights to overwrite default 1 / -1
+            self.user = user
+            self.container = self._first_level_container()
 
+            self._quality_updating(trim=trim)
+
+            self.conditions = task_info['conditions']                   # In-scanner conditions
+            self.contrasts = task_info['design-contrasts']              # Weights to overwrite default 1 / -1
+            self.tr = task_info['tr']                                   # Repetition time
+            self.trial_type = task_info['trial_type']                   # Column in onsets file to split conditions on
+            self.design_type = task_info['design-type']                 # Event or Block
+
+            # Regressors for first-level design matrix
+            self.confound_regressors = task_info['confound_regressors']
+            self.network_regressors = task_info['network_regressors']   
+            self.block_regressors = task_info['block_regressors']       
+            
             # Output Directories
             self.nilearn_first_level_condition = output[0]
             self.nilearn_first_level_contrasts = output[1]
@@ -62,8 +69,11 @@ class SCP_Sub(Subject):
             if self.alt_model:
                   self.first_level_output = os.path.join(self.first_level_output, 'alt')
 
+            if len(task_info['modulators']) > 0:
+                  self._mean_center_modulators(task_info)
 
-      # -------- FIRST-LEVEL GLM
+
+      # -------- Utility Functions
 
       def _taskfile_validator(self):
             """
@@ -91,13 +101,12 @@ class SCP_Sub(Subject):
 
       def _nipype_output_directories(self):
             """
-            Runs @ __init__
-
             Dedicated output directories for Nipype and Nilearn output
             This creates new dirs AND returns list of relative paths
             """
 
-            base_dir = self.first_level_output                          # Base dir in derivatives directory
+            # Base dir in derivatives directory
+            base_dir = self.first_level_output                          
 
             subdirs = [
                   # For Z-Maps (.nii.gz)        
@@ -126,6 +135,49 @@ class SCP_Sub(Subject):
             return keepers
 
 
+      def _first_level_container(self):
+            """
+            This is a useful dictionary to store run-wise and object-wise lists of aboslute paths
+            """
+
+            container = {'ordered-runs':[], 'ordered-events':[], 'ordered-confounds':[]}
+
+            for index, brain in enumerate(self.preprocessed_bold_only):
+                  
+                  # E.g., index 0 == run-1, index 1 == run-2, etc.
+                  run_check = f"run-{index+1}"           
+
+                  # Standardize run-wise containers
+                  container[run_check] = {'bold':'', 'event':'', 'confound':''}
+
+                  """
+                  
+                  """
+
+                  try:
+                        current_bold = [x for x in self.preprocessed_bold_only if run_check in x][0]
+                        container[run_check]['bold'] = current_bold
+                        container['ordered-runs'].append(current_bold)
+                  except:
+                        print(f"No bold signal for {run_check}")
+
+                  try:
+                        current_event = [x for x in self.events if run_check in x][0]
+                        container[run_check]['event'] = current_event
+                        container['ordered-events'].append(current_event)
+                  except:
+                        print(f"No event file for {run_check}")
+
+                  try:
+                        current_confound = [x for x in self.confounds if run_check in x][0]
+                        container[run_check]['confound'] = current_confound
+                        container['ordered-confounds'].append(current_confound)
+                  except:
+                        print(f"No confound derivative for {run_check}")
+
+            return container
+
+
       def _detonate(self):
             """
             Press reset ... for development only
@@ -141,7 +193,7 @@ class SCP_Sub(Subject):
             """
 
             self._detonate()
-            self._output_1L()
+            self._output_1L(self.user)
             self._nipype_output_directories()
 
 
@@ -162,122 +214,282 @@ class SCP_Sub(Subject):
 
             self.conditions = CONDITIONS
 
+      
+      def _isolate_run(self, X):
+          return super()._isolate_run(X)
 
-      def derive_dummy_scans(self):
+
+      def _quality_updating(self, trim):
             """
-            Returns list of binary 1,0 to denote number of dummy scans
-            """
+            trim => Boolean, determines if we'll drop runs or not
 
-            events = self.load_events()                                 # Load event onset TSVs
-            dummies = self.dummy_scans                                  # Hard-coded to 2
+            This function performs the following operations
 
-            if 'run' not in events.columns:                             # Single-run event onsets
-                  size = len(events) - dummies                          # Number of non dummy scans
-                  scans = ([1] * dummies) + ([0] * size)                # List of binary values
-
-                  return scans
-
-            else:                                                       # Multi-run event onsets
-                  container = []                                        # To hold list of lists / run
-
-                  for run in events['run'].unique():
-
-                       # Isolate run + create dummy regressors per run
-                        temp = events[events['run'] == run].reset_index(drop=True)
-                        size = len(temp) - dummies
-                        container.append(([1]*dummies) + ([0] * size))
-
-                  # Concatenate lists into one
-                  scans = []
-                  for comp in container:
-                        scans = scans + comp
-
-                  return scans
-
-
-      def longform_events(self, target_column, run):
-            """
-            target_column => Denotes in-scanner network stimulus (e.g., 'target')
-
-            Perform the following operations:
-                  * Match a DataFrame to the length of confound regressors
-                  * Reduce events down to key columns and merge with full range of TRs
-                  * Merge network regressors from external JSON file
-                  * Binarize based on conditon
-
-            Returns Pandas DataFrame object
+            * Read in QA JSON file
+            * Drop any runs from excludes
+            * Set proper # of dummy TR's
             """
 
-            # Base files (stored in BIDS directory)
-            base_events = self.load_events(run=run)
-            base_confounds = self.load_confounds(run=run)
+            subject_key = f"sub-{self.subID}"
 
-            # Number of TRs in current run
-            tr_total = len(base_confounds)
+            with open('./quality-assurance.json') as incoming:
+                  qa = json.load(incoming)
 
-            # One row / TR in DataFrame format
-            empty_events = pd.DataFrame({'onset':list(range(0, tr_total))})
+            # ---- Drop runs
 
-            # Reduce to variables of interest
-            voi = ['onset', 'duration'] + [self.trial_type] + [target_column]
+            if trim:
 
-            if "trial_type" in list(base_events.columns):
-                  voi = voi + ['trial_type']
+                  try:
+                        excludes = qa['excludes'][subject_key]
 
-            base_events = base_events.loc[:, set(voi)]
+                        for run_to_exclude in excludes:
+                              for key in list(self.container.keys()):
+                                    if key == run_to_exclude:
+                                          self.container.pop(key, None)
+                                          continue
 
-            # Merge events with number of TRs
-            events = empty_events.merge(base_events, on='onset', how='left')
-            modulators = list(events.columns)[2:]
+                                    for item in self.container[key]:
+                                          if run_to_exclude in item:
+                                                self.container[key].remove(item)
 
-            for index, value in enumerate(events['duration']):
-                  """
-                  * This loop fixes issues with scan durations > 1. seconds
-                  * If a task run has duration > 1s, 'target' and 'condition' rows are filled with the same values
-                  """
-                  if not np.isnan(value):
-                        if float(value) > 1.:
-                              end = value - 1.
-                              
-                              while end > 0:
-                                    for var in modulators:
-                                          events[var][index+end] = events[var][index]
-                                    end -= 1
-
-            if len(self.network_regressors) > 0:
-                  with open('./subject_information.json') as incoming:
-                        networks = json.load(incoming)
-                        
-                        def iso_value(x, var):
-                              try:
-                                    return float(networks[x][var])
-                              except:
-                                    return None
-                              
-                        for var in self.network_regressors:
-                              # Derive network values from external JSON file
-                              events[var] = events[target_column].apply(lambda x: iso_value(x, var))
-                              events[var].fillna(0, inplace=True)
+                  except KeyError as e:
+                        print(f"{subject_key} not in excludes ... {e}")
 
 
-            def binarize_condition(x, condition):
-                  if x == condition:
-                        return 1
+            # ---- Update dummy scans
+
+            try:
+                  includes = qa['includes'][subject_key]
+                  self.dummy_scans = includes['dummy']
+
+                  for run, dummy in zip(includes['run'], includes['dummy']):
+                        self.container[f"run-{run}"]['dummy'] = dummy
+
+            except Exception as e:
+                  print(f"sub-{self.subID} ... {e}")
+
+
+      def _mean_center_modulators(self, task_file):
+            """
+            
+            """
+
+            for novel_modulator in task_file['modulators']:
+                  if novel_modulator == 'intensity_delta':
+                        events = self.load_events(run='ALL')
+                        events['intensity_delta'] = events['intensity_rating'] - events['initial_intensity']
+                        self.container[f'{novel_modulator}_mean'] = np.mean(events['intensity_delta'])
+
                   else:
-                        return 0
-                  
-            for condition in list(self.conditions):
-                  # Creates a binary-value column for every condition in task
-                  events[condition] = events[self.trial_type].apply(lambda x: binarize_condition(x, condition))
+                        iso_column = self.load_events(run='ALL').loc[:, novel_modulator]
+                        self.container[f'{novel_modulator}_mean'] = np.mean(iso_column)
 
-            if len(self.block_regressors) > 0:
-                  for condition in list(self.block_regressors):
-                        events[condition] = events['trial_type'].apply(lambda x: binarize_condition(x, condition))
+
+      # -------- Modeling Functions
+
+
+      def generate_matrices(self, run_value):
+            """
+            index => Value to pull data from self.container() dictionary
+
+            Helper function to loop through runs and generate 1:1 matrix:run
+
+            Returns single design matrix
+            """
+
+            # ----- Helper functions
+
+            def non_steady_state_aggregate(length, dummy_value):
+                  """
+
+                  """
+
+                  dummy_value = int(dummy_value)
+                  real_length = length - dummy_value
+
+                  return [1] * dummy_value + [0] * real_length
+
+
+            def block_regressors(DF):
+                  """
+                  Derives block-trial pair ... e.g., high_trust_perspective
+                  """
+                  
+                  block = DF['block_type']
+                  trial = DF['trial_type']
+
+                  if trial == 'memory':
+                        return trial
+                  elif trial == "spatial":
+                        return trial
+
+                  """if block in ['high_trust', 'low_trust']:
+                        return f"other_{DF['trial_type']}"""
+
+                  return f"{DF['block_type']}_{DF['trial_type']}"
+
+
+            def create_temp_dm(events, mod_name, frame_times):
+                  """
+                  events => 
+                  mod_name => Modulator value, should be column in your events file
+                  """
+
+                  if mod_name == 'intensity_delta':
+                        events['intensity_delta'] = events['intensity_rating'] - events['initial_intensity']
+
+                  temp = events.rename(columns={mod_name: 'modulation'})
+                  temp['modulation'] = temp['modulation'] - self.container[f'{mod_name}_mean']
+                  temp['trial_type'] = temp['trial_type'].apply(lambda x: f'{x}_x_{mod_name}')
+
+                  if mod_name == 'intensity_rating':
+
+                      output_cols = ['memory_x_intensity_rating']
+
+                  elif mod_name == 'intensity_delta':
+
+                        """output_cols = ['self_perspective_x_intensity_delta',
+                                      'other_perspective_x_intensity_delta']"""
+
+                        output_cols = ['self_perspective_x_intensity_delta',
+                                       'high_trust_perspective_x_intensity_delta',
+                                       'low_trust_perspective_x_intensity_delta']
+
+                  else:
+                        output_cols = list(temp['trial_type'].unique())
+
+                  dm = first_level.make_first_level_design_matrix(frame_times, temp, hrf_model='spm')
+                  
+                  return dm.loc[:, output_cols].reset_index()
+
+
+            def reorder_dm_columns(dm):
+                  dm.drop(columns=['index'], inplace=True)
+
+                  tail = [x for x in dm.columns if 'drift' in x] + ['constant']
+                  head = [x for x in dm.columns if x not in tail]
+
+                  clean = head + tail
+
+                  return dm.loc[:, clean] 
+
+
+            with open('./task_information.json') as incoming:
+                  networks = json.load(incoming)[self.task]             # Read in task information as a dictionary
+
+            iso_container = self.container[f"run-{run_value}"]
+
+            voi = ['onset', 'duration', 'target', 'trial_type']
+            is_block_design = False
+            has_modulator = False
+            
+            if self.design_type == 'block':
+                  is_block_design = True
+                  voi += ['block_type']
+
+            if len(networks['modulators']) > 0:
+                  has_modulator = True
+
+                  if 'intensity_delta' in networks['modulators']:
+                        mod_names = networks['modulators'].copy()
+                        mod_names.remove('intensity_delta')
+                        mod_names += ['initial_intensity', 'intensity_rating']
+                  else:
+                        mod_names = networks['modulators']
+                  
+                  voi += set(mod_names)
+
+            
+            events = pd.read_csv(iso_container['event'], sep='\t').loc[:, voi]
+            confounds = pd.read_csv(iso_container['confound'], sep='\t')
+
+            n_scans = len(confounds)
+            tr = self.tr
+            frame_times = np.arange(n_scans) * tr
+
+            # ----- Events
+            events = events[events['trial_type'] != 'fixation'].reset_index(drop=True)
+
+            if is_block_design:
+                  events['trial_type'] = events.apply(block_regressors, axis=1)
+                  events.drop(columns=['block_type'], inplace=True)    
+
+            if has_modulator:
+
+                  mod_dms = []
+
+                  for novel_modulator in networks['modulators']:
+                        mod_dms.append(create_temp_dm(events, novel_modulator, frame_times))
+
+
+            # NOTE: Conditions are reset here for first-level model
+            self.set_conditions(set(events['trial_type'].unique()))
+
+            events = first_level.make_first_level_design_matrix(frame_times, events, hrf_model='spm').reset_index()
+
+            if has_modulator:
+
+                  for dm in mod_dms:
+                        events = events.merge(dm, on='index', how='left')
+
+            # ----- Confounds
+            try:
+                  dummy_value = iso_container['dummy']
+            except:
+                  dummy_value = 2      
+            
+            #
+            confounds['non_steady_state'] = non_steady_state_aggregate(length=len(confounds), dummy_value=dummy_value) 
+
+            motion_outliers = [x for x in list(confounds.columns) if 'motion_outlier' in x]
+            keepers = self.confound_regressors + motion_outliers
+
+            #
+            confounds = confounds.loc[:, keepers].reset_index(drop=False)
+
+            # ----- Aggregate
+
+            events = events.merge(confounds, on='index', how='left')
+
+            """
+            Nilearn doesn't accept NA's in confound regressors
+            We'll mean impute any missing datat here
+            """
+
+            for var in ['framewise_displacement', 'dvars']:
+                  events[var].fillna(np.mean(events[var]), inplace=True)
+
+            
+            """
+            We want a list of *n* values per row (1 value per additional regressor)
+            Now we'll loop through confounds DataFrame and adding all values per row to a list
+            Then that list will be appended to the master list
+            """
+
+            motion = []                                                                   #
+
+            for ix, val in enumerate(events['index']):
+                  package = []                                                            #
+
+                  for var in keepers:
+                        package.append(events[var][ix])                                 #
+
+                  motion.append(package)                                                  #
+
+            events = reorder_dm_columns(events)
 
             return events
 
+            """
+            return first_level.make_first_level_design_matrix(frame_times,
+                                                              events,
+                                                              drift_model='polynomial',
+                                                              drift_order=3,
+                                                              add_regs=motion,
+                                                              add_reg_names=keepers,
+                                                              hrf_model='spm')            
+            """
 
-      # ------ DEFINE DESIGN MATRICES AND RUN GLM WITH NILEARN
 
 
       def firstLevel_event_design(self):
@@ -288,135 +500,17 @@ class SCP_Sub(Subject):
             Returns list of matrix objects
             """
 
-            with open('./task_information.json') as incoming:
-                  networks = json.load(incoming)[self.task]             # Read in task information as a dictionary
-
-
-            def generate_matrices(run):
-                  """
-                  Helper function to loop through runs and generate 1:1 matrix:run
-
-                  Returns single design matrix
-                  """
-
-                  if self.task != 'faces':
-
-                        # Load in events file for the current run
-                        events = self.load_events(run=run).loc[:,['onset','duration', self.trial_type]].reset_index(drop=True)
-                        events.rename(columns={self.trial_type:'trial_type'}, inplace=True)
-
-                        # Load in confound regressors for the current run
-                        confound_regressor_names = list(networks['confound_regressors'])
-                        confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
-
-                        """
-                        If you have network regressors defined they'll be added to the DM here
-                        """
-
-                        if (len(self.network_regressors) > 0):
-                              long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
-                              confounds = confounds.merge(long_network, on='index')
-                              confound_regressor_names += list(self.network_regressors)
-
-
-                  elif self.task == 'faces':
-
-                        events = self.load_events(run=run).loc[:, ['onset', 'duration', self.trial_type]].reset_index(drop=True)
-
-                        def faces_v_ac(x):
-                              if x in ['dorm', 'nondorm']:
-                                    return 'face'
-                              else:
-                                    return 'attention'
-
-                        events['trial_type'] = events[self.trial_type].apply(lambda x: faces_v_ac(x))
-                        events.drop(columns=[self.trial_type], inplace=True)
-                        
-                        self.conditions = list(events['trial_type'].unique())
-
-                        confound_regressor_names = list(networks['confound_regressors'])
-                        confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
-
-                        if len(self.network_regressors) > 0:
-                              long_network = self.longform_events(target_column='target', run=run).reset_index()
-                              long_network['face'] = long_network['condition'].apply(lambda x: faces_v_ac(x))
-
-                              def dorm_nondorm(df):
-                                    check = df[self.trial_type]
-
-                                    if check == 'dorm':
-                                          return 1
-                                    return 0
-
-                              long_network['dorm-membership'] = long_network.apply(dorm_nondorm, axis=1)
-
-                              keepers = ['index', 'dorm-membership'] + self.network_regressors
-
-                              long_network = long_network.loc[:, keepers]
-                              confounds = confounds.merge(long_network, on='index')
-                              confound_regressor_names += ['dorm-membership'] + self.network_regressors
-
-                  
-                  # Attributes for the DM
-                  n_scans = len(confounds)
-                  tr = self.tr
-                  frame_times = np.arange(n_scans) * tr
-                  hrf_model = 'spm'
-
-                  """
-                  Nilearn doesn't accept NA's in confound regressors
-                  We'll mean impute any missing datat here
-                  """
-
-                  mean_impute = {}                                      # Empty dictionary to hold key:value pairs
-
-                  for var in ['framewise_displacement', 'dvars']:
-                        mean_impute[var] = np.mean(confounds[var])      # We'll accept FD and DVARS missing vals only
-
-                  """
-                  We want a list of *n* values per row (1 value per additional regressor)
-                  Now we'll loop through confounds DataFrame and adding all values per row to a list
-                  Then that list will be appended to the master list
-                  """
-
-                  motion = []                                           # Parent list
-
-                  for ix, index in enumerate(confounds['index']):
-                        package = []                                    # Child list (1 list per row)
-
-                        for var in confound_regressor_names:
-                              temp = confounds[var][ix]
-
-                              if np.isnan(temp):
-                                    try:
-                                          # Impute null values with mean / var
-                                          package.append(mean_impute[var])
-                                    except Exception as e:
-                                          print(f"{self.subID}: {e} @ line 341\n")
-                                          package.append(temp)
-                              else:
-                                    package.append(temp)
-
-                        motion.append(package)
-
-                  return first_level.make_first_level_design_matrix(frame_times,
-                                                                    events,
-                                                                    drift_model='polynomial',
-                                                                    drift_order=3,
-                                                                    add_regs=motion,
-                                                                    add_reg_names=confound_regressor_names,
-                                                                    hrf_model=hrf_model)
-
-
-            functional_runs = len(self.preprocessed_bold_only) + 1      # For an exclusive range   
-            design_matrices = []                                        # Empty list to append matrix objects into
+            design_matrices = []
             
-            for run in range(1, functional_runs):
+            for scan in self.container['ordered-runs']:
+
+                  run_value = self._isolate_run(scan)
+
                   # Generate a design matrix per run
-                  matrix = generate_matrices(run=run)
+                  matrix = self.generate_matrices(run_value)
                   
                   # Filename for DM output
-                  file_name = f"sub-{self.subID}_task-{self.task}_run-{run}_design-matrix.png"
+                  file_name = f"sub-{self.subID}_task-{self.task}_run-{run_value}_design-matrix.png"
                   
                   # Relative path for DM output
                   output_path = os.path.join(self.first_level_output, 'plotting', file_name)
@@ -426,111 +520,6 @@ class SCP_Sub(Subject):
 
                   # Add DM to list
                   design_matrices.append(matrix)
-
-            return design_matrices
-
-
-      def firstLevel_block_design(self):
-            """
-            NOTE: This function is intended for block-designs
-            Creates a design matrix per functional run
-
-            Returns list of design matrices
-            """
-
-            with open('./task_information.json') as incoming:
-                  networks = json.load(incoming)[self.task]
-
-            def generate_matrices(run):
-                  events = self.load_events(run=run)
-
-                  events = events[events['trial_type'] != "fixation"].reset_index(drop=True)
-
-                  def derive_block(DF):
-                        return f"{DF['block_type']}_{DF['trial_type']}"
-
-                  events['long'] = events.apply(derive_block, axis=1)
-                  events = events.loc[:, ['onset','duration','long']].rename(columns={'long':'trial_type'})
-
-                  self.set_conditions(list(events['trial_type']))
-
-                  confound_regressor_names = list(networks['confound_regressors'])
-                  confounds = self.load_confounds(run=run).loc[:, confound_regressor_names].reset_index(drop=False)
-
-                  if len(self.network_regressors) > 0:
-                        long_network = self.longform_events(target_column='target', run=run).loc[:, self.network_regressors].reset_index()
-                        confounds = confounds.merge(long_network, on='index')
-                        confound_regressor_names += list(self.network_regressors)
-
-                  # Attributes for the DM
-                  n_scans = len(confounds)
-                  tr = self.tr
-                  frame_times = np.arange(n_scans) * tr
-                  hrf_model = 'spm'
-
-                  """
-                  Nilearn doesn't accept NA's in confound regressors
-                  We'll mean impute any missing data here
-                  """
-
-                  # Empty dictionary to hold key:value pairs
-                  mean_impute = {}
-
-                  for var in ['framewise_displacement', 'dvars']:
-                        # We'll accept FD and DVARS missing vals only
-                        mean_impute[var] = np.mean(confounds[var])
-
-                  """
-                  We want a list of *n* values per row (1 value per additional regressor)
-                  Now we'll loop through confounds DataFrame and adding all values per row to a list
-                  Then that list will be appended to the master list
-                  """
-
-                  motion = []                                           # Parent list
-
-                  for ix, index in enumerate(confounds['index']):
-                        # Child list (1 list per row)
-                        package = []
-
-                        for var in confound_regressor_names:
-                              temp = confounds[var][ix]
-
-                              if np.isnan(temp):
-                                    # Impute null values with mean / var
-                                    package.append(mean_impute[var])
-                              else:
-                                  package.append(temp)
-
-                        motion.append(package)
-
-                  return first_level.make_first_level_design_matrix(frame_times,
-                                                                    events,
-                                                                    drift_model='polynomial',
-                                                                    drift_order=3,
-                                                                    add_regs=motion,
-                                                                    add_reg_names=confound_regressor_names,
-                                                                    hrf_model=hrf_model)
-
-            # For an exclusive range
-            functional_runs = len(self.preprocessed_bold_only) + 1
-            # Empty list to append matrix objects into
-            design_matrices = []
-
-            for run in range(1, functional_runs):
-                # Generate a design matrix per run
-                matrix = generate_matrices(run=run)
-
-                # Filename for DM output
-                file_name = f"sub-{self.subID}_task-{self.task}_run-{run}_design-matrix.png"
-
-                # Relative path for DM output
-                output_path = os.path.join(self.first_level_output, 'plotting', file_name)
-
-                # Create and save design matrix
-                nip.plot_design_matrix(matrix, output_file=output_path)
-
-                # Append DM to list
-                design_matrices.append(matrix)
 
             return design_matrices
 
@@ -555,7 +544,7 @@ class SCP_Sub(Subject):
             return contrasts
 
 
-      def _run_contrast(self, glm, contrast, title, output_type, smoothing):
+      def _run_contrast(self, glm, contrast, title, output_type, smoothing, plot_brains=False):
             """
             glm => FirstLevelModel object
             contrast => specific condition or contrast equation (e.g., high_trust - low_trust)
@@ -583,33 +572,69 @@ class SCP_Sub(Subject):
                   v_base = self.nilearn_plotting_contrasts
                   n_base = self.nilearn_first_level_contrasts
 
-            glass_output = f"{v_base}/glass/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-glass-brain.png"
-            stat_output = f"{v_base}/stat/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-stat-map.png"
-            report_output = f"{v_base}/summary/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_summary.html"
-
-            nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_z-map.nii.gz"
-
             # Compute the contrast itself
+            nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_z-map.nii.gz"
             z_map = glm.compute_contrast(contrast)
-
-            # Plot and save brain map visualizations
-            nip.plot_glass_brain(z_map, colorbar=False, threshold=2.3,
-                                 plot_abs=False, display_mode='lyrz',
-                                 title=title, output_file=glass_output)
-
-            nip.plot_stat_map(z_map, threshold=2.3, colorbar=False,
-                              draw_cross=False, display_mode='ortho',
-                              title=title, output_file=stat_output)
-
-            make_glm_report(model=glm,
-                            contrasts=contrast,
-                            plot_type='glass').save_as_html(report_output)
 
             # Save .nii.gz
             z_map.to_filename(os.path.join(nifti_output))
-                  
 
-      def firstLevel_contrasts(self, conditions=True, smoothing=4.):
+            if plot_brains:
+                  glass_output = f"{v_base}/glass/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-glass-brain.png"
+                  stat_output = f"{v_base}/stat/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_plot-stat-map.png"
+                  report_output = f"{v_base}/summary/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_summary.html"
+
+                  nifti_output = f"{n_base}/sub-{self.subID}_{output_type}-{title}_smoothing-{kernel}mm_z-map.nii.gz"
+
+                  # Plot and save brain map visualizations
+                  nip.plot_glass_brain(z_map, colorbar=False, threshold=2.3,
+                                    plot_abs=False, display_mode='lyrz',
+                                    title=title, output_file=glass_output)
+
+                  nip.plot_stat_map(z_map, threshold=2.3, colorbar=False,
+                                    draw_cross=False, display_mode='ortho',
+                                    title=title, output_file=stat_output)
+
+                  make_glm_report(model=glm,
+                              contrasts=contrast,
+                              plot_type='glass').save_as_html(report_output)
+
+
+      def evaluate_model(self, model, contrast="default"):
+            """
+            model => FirstLevelModel object
+            contrast => 
+
+            This function performs the following operations
+                  * Extract clusters
+                  * Calculate and plot residuals
+            """
+
+            from nilearn.reporting import get_clusters_table
+            from nilearn import input_data, image, masking
+            import matplotlib.pyplot as plt
+
+            test_img = image.concat_imgs(self.container['ordered-runs'])
+            mean_img = image.mean_img(test_img)
+            mask = masking.compute_epi_mask(mean_img)
+
+            fmri_img = image.clean_img(test_img, standardize=False)
+            fmri_img = image.smooth_img(fmri_img, fwhm=8.)
+
+            if contrast == "default":
+                  contrast = "+".join(self.conditions)
+
+            z_map = model.compute_contrast(contrast)
+
+            table = get_clusters_table(z_map, stat_threshold=3., cluster_threshold=20).set_index('Cluster ID', drop=True)
+            coords = table.loc[range(1,6), ['X','Y','Z']].values
+
+            masker = input_data.NiftiSpheresMasker(coords)
+            real_timeseries = masker.fit_transform(fmri_img)
+            predicted_timeseries = masker.fit_transform(fmri_img.predicted[0])
+
+                  
+      def firstLevel_contrasts(self, conditions=True, contrasts=True, smoothing=4., default_design=True, user_design=None, plot_brains=False):
             """
             Runs FirstLevelModel via Nilearn GLM package
             If conditions=False then only pairwise trial_type contrasts are computed
@@ -628,38 +653,47 @@ class SCP_Sub(Subject):
             else:
                   contrasts = networks['design-contrasts']
 
-            # Event and Block designs have different helper functions
-            if networks['design-type'] == 'event':
+            if default_design:
+                  # Event and Block designs have different helper functions
                   design_matrices = self.firstLevel_event_design()
-            elif networks['design-type'] == 'block':
-                  design_matrices = self.firstLevel_block_design()
+
+            else:
+                  design_matrices = user_design
+
+                  if isinstance(design_matrices, list):
+                        if not isinstance(design_matrices[0], pd.DataFrame):
+                              raise TypeError("User defined design matrices should be DataFrame object, or list of DataFrames")
+
+                  elif not isinstance(design_matrices, pd.DataFrame):
+                        raise TypeError("User defined design matrices should be DataFrame object, or list of DataFrames")
                   
 
             # Scaffolding for model (HRF model and smoothing kernel)
-            glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=smoothing, hrf_model='spm')
+            glm = first_level.FirstLevelModel(t_r=self.tr, smoothing_fwhm=smoothing, hrf_model='spm', minimize_memory=False)
 
-            print("\n--------- Fitting model, please hold...")
+            print("\n--------- Fitting model")
             # Fit data to model
-            model = glm.fit(self.preprocessed_bold_only, design_matrices=design_matrices)
+            model = glm.fit(self.container['ordered-runs'], design_matrices=design_matrices)
 
-            # Map baseline trial types if user desires
+
             if conditions:
                   print("\n--------- Mapping condition z-scores\n")
                   for contrast in tqdm(self.conditions):
-                        self._run_contrast(glm=model, contrast=contrast, title=contrast, output_type="condition", smoothing=smoothing)
-
-            # Contrasts will always be mapped
-            print("\n--------- Mapping contrast z-scores\n")
-            for k in tqdm(list(contrasts.keys())):
-                  self._run_contrast(glm=model, contrast=contrasts[k], title=k, output_type="contrast", smoothing=smoothing)
+                        self._run_contrast(glm=model, contrast=contrast, title=contrast, output_type="condition", smoothing=smoothing, plot_brains=plot_brains)
 
 
-      def run_first_level_glm(self, conditions=True, smoothing=4.):
+            if contrasts:
+                  print("\n--------- Mapping contrast z-scores\n")
+                  for k in tqdm(list(contrasts.keys())):
+                        self._run_contrast(glm=model, contrast=contrasts[k], title=k, output_type="contrast", smoothing=smoothing, plot_brains=plot_brains)
+
+
+      def run_first_level_glm(self, conditions=True, smoothing=4., plot_brains=False):
             """
             If conditions if False, baseline z-maps are not calculated
 
             This helper is technically extraneous but it wraps everything nicely, so why not
             """
 
-            self.firstLevel_contrasts(conditions=conditions, smoothing=smoothing)          
+            self.firstLevel_contrasts(conditions=conditions, smoothing=smoothing, plot_brains=plot_brains)          
             print(f"\n\n{self.task.upper()} contrasts computed! subject-{self.subID} has been mapped")
