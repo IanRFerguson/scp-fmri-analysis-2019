@@ -13,6 +13,7 @@ warnings.filterwarnings('ignore')
 
 import pandas as pd
 import numpy as np
+import math
 from tqdm import tqdm
 from nilearn.glm import second_level, threshold_stats_img
 import nilearn.plotting as nip
@@ -33,7 +34,7 @@ except:
 
 class GroupLevel:
 
-      def __init__(self, task, complete_BIDS=False):
+      def __init__(self, task, complete_BIDS=False, user='ian'):
             """
             task => Corresponds to valid task in BIDS dataset
             complete_BIDS => Boolean, True if all raw data is available (on HPC)
@@ -47,11 +48,11 @@ class GroupLevel:
             self._output_directory()                                    # Create relevant output dirs
 
             if complete_BIDS:
-                  self.subjects = self._iso_BIDS_subjects()
+                  self.subjects = self._iso_BIDS_subjects(user)
             else:
-                  self.subjects = self._iso_subjects()
+                  self.subjects = self._iso_subjects(user)
 
-            self.all_brain_data = self._brain_data()                    # List of ALL NifTi's
+            self.all_brain_data = self._brain_data(user)                # List of ALL NifTi's
             self.available_contrasts = self._available_contrasts()      # List of contrasts available for analysis
             self.task_file = self._taskfile_validator()                 # Confirms presence of JSON info files
             
@@ -102,7 +103,7 @@ class GroupLevel:
                               pathlib.Path(temp).mkdir(exist_ok=True, parents=True)
 
 
-      def _iso_BIDS_subjects(self):
+      def _iso_BIDS_subjects(self, user):
             """
             Deployment function - Only works with complete BIDS dataset
             Returns a list of subjects with first-level maps
@@ -112,7 +113,7 @@ class GroupLevel:
             task_subjects = []                                          
             
             # Relative path to first-level maps
-            deriv_level = os.path.join(root, "derivatives/first-level") 
+            deriv_level = os.path.join(root, f"derivatives/first-level-{user}") 
 
             # Leverages BIDSLayout to isolate subject ID numbers
             for sub in all_subjects:
@@ -123,7 +124,7 @@ class GroupLevel:
             return task_subjects
 
 
-      def _iso_subjects(self):
+      def _iso_subjects(self, user):
             """
             Development function - Works with isolated derivatives
             Returns a list of subjects with first-level maps
@@ -133,7 +134,7 @@ class GroupLevel:
             task_subjects = []                                          
             
             # Relative path to first-level maps
-            deriv_level = os.path.join(root, "derivatives/first-level") 
+            deriv_level = os.path.join(root, f"derivatives/first-level-{user}") 
             
             # Complete list of subjects
             subject_level = [x for x in os.listdir(deriv_level) if "sub-" in x]
@@ -149,13 +150,16 @@ class GroupLevel:
             return task_subjects
 
 
-      def _brain_data(self):
+      def _brain_data(self, user):
             """
             Returns a dictionary of subject:run key-value pairs
             """
 
-            data = {k:[] for k in self.subjects}                        # Dictionary with empty lists for each subject
-            base = os.path.join(root, "derivatives/first-level")        # Relative path to first-level subdirectory
+            # Dictionary with empty lists for each subject
+            data = {k:[] for k in self.subjects}                        
+
+            # Relative path to first-level subdirectory
+            base = os.path.join(root, f"derivatives/first-level-{user}")      
 
             for sub in self.subjects:
                   # Define relative paths to first-level-models per subject
@@ -235,7 +239,7 @@ class GroupLevel:
             return output
 
 
-      def brain_mosaic(self, contrast, smoothing=8.):
+      def brain_mosaic(self, contrast, smoothing=8., save_local=False):
             """
             
             """
@@ -243,17 +247,61 @@ class GroupLevel:
             brains = self.get_brain_data(contrast=contrast, 
                                          smoothing=f"{int(smoothing)}mm")
 
-            figure, axes = plt.subplots(nrows=int(len(brains) / 5), ncols=5, figsize=(20,20))
+            rows = int(math.ceil(len(brains) / 5))
+
+            figure, axes = plt.subplots(nrows=rows, ncols=5, figsize=(20,20))
+
+            for x in range(rows):
+                  for y in range(5):
+                        axes[x,y].axis('off')
+
+            figure.suptitle(f"{contrast}_{int(smoothing)}mm", fontweight='bold')
 
             for index, brain in enumerate(brains):
 
                   sub_id = brain.split('/')[-1].split('_')[0].split('-')[1]
 
-                  k = nip.plot_glass_brain(brain, threshold=3., display_mode='z',
+                  k = nip.plot_glass_brain(brain, threshold=3.2, display_mode='z',
                                            plot_abs=False, colorbar=False, title=sub_id,
                                            axes=axes[int(index / 5), int(index % 5)])
 
+            if save_local:
+                  filename = os.path.join(self.plotting_output, f"{contrast}_{int(smoothing)}mm.jpg")
+                  plt.savefig(filename)
+
             plt.show()
+
+
+      def subject_contrast_maps(self, contrasts=[], smoothing=8.):
+            """
+            
+            """
+
+            if len(contrasts) == 0:
+                  raise ValueError("No contrasts supplied")
+
+            for sub in self.subjects:
+                  brain_data = [x for x in self.all_brain_data[sub] if f"{int(smoothing)}mm" in x]
+                  keepers = []
+
+                  for brain in brain_data:
+                        for contrast in contrasts:
+                              if contrast in brain:
+                                    keepers.append(brain)
+
+                  figure, axes = plt.subplots(nrows=1, ncols=len(contrasts), figsize=(15,4))
+
+                  for index, brain in enumerate(keepers):
+                        title = brain.split('/')[-1].split('-')[2].split('_smoothing')[0]
+
+                        k = nip.plot_glass_brain(brain, threshold=3.2, display_mode='z', 
+                                                 colorbar=False, plot_abs=False, title=title,
+                                                 axes=axes[index])
+
+                  figure.suptitle(sub, fontweight='bold')
+                  plt.show()
+
+                  print('\n\n')
 
 
       # ------- Modeling
@@ -301,6 +349,7 @@ class GroupLevel:
                   design_matrix[var] = pd.to_numeric(design_matrix[var])
 
             return make_second_level_design_matrix(subjects_label, design_matrix)
+
 
       def _basic_model(self, contrast, smoothing=8., direction=1, smooth_group=False):
             """
@@ -406,7 +455,7 @@ class GroupLevel:
       # ------- Multiple Comparisons and Analysis Tools
 
 
-      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='ortho', alpha=0.001, cluster_threshold=None, return_map=False):
+      def one_sample_test(self, nifti, contrast, height_control="fpr", plot_style='ortho', alpha=0.001, cluster_threshold=0, return_map=False):
             """
             nifti => z_map contrast computed from a SecondLevelModel object
             contrast => String used for title on plot
@@ -438,7 +487,7 @@ class GroupLevel:
 
             elif plot_style == 'ortho':
                   nip.plot_stat_map(temp_map, threshold=temp_thresh, display_mode='ortho',
-                                    draw_cross=False)
+                                    draw_cross=False, title=title)
 
             else:
                   raise ValueError(f"Check your plot_style parameter, {plot_style} not in ['glass', 'stat']")
