@@ -1,202 +1,172 @@
-{"faces": {
-        "conditions": [
-            "nondorm",
-            "dorm",
-            "attention_check"
-        ],
-        "confound_regressors": [
-            "framewise_displacement",
-            "dvars",
-            "csf",
-            "trans_x",
-            "trans_y",
-            "trans_z",
-            "rot_x",
-            "rot_y",
-            "rot_z",
-            "white_matter"
-        ],
-        "network_regressors": [],
-        "block_regressors": [],
-        "trial_type": "condition",
-        "tr": 1.0,
-        "excludes": [
-            "02013",
-            "02031",
-            "02037",
-            "02045",
-            "02060",
-            "05061"
-        ],
-        "design-contrasts": {
-            "dorm-membership": "dorm-membership"
-        },
-        "design-type": "event",
-        "group-level-regressors": [
-            "indegree_CloseFrds_fa18",
-            "outdegree_CloseFrds_fa18",
-            "Extraversion",
-            "Agreeableness",
-            "Openness",
-            "Conscientiousness",
-            "EmotionalStability",
-            "Loneliness",
-            "Self_Esteem",
-            "STAI_Anxiety"
-        ]
-    },
-    "stressbuffer": {
-        "conditions": [
-            "self",
-            "low_trust",
-            "high_trust"
-        ],
-        "confound_regressors": [
-            "framewise_displacement",
-            "dvars",
-            "csf",
-            "trans_x",
-            "trans_y",
-            "trans_z",
-            "rot_x",
-            "rot_y",
-            "rot_z",
-            "white_matter"
-        ],
-        "network_regressors": [],
-        "block_regressors": [
-            "fixation",
-            "memory",
-            "perspective",
-            "valence",
-            "arousal",
-            "spatial"
-        ],
-        "trial_type": "block_type",
-        "tr": 1.0,
-        "excludes": [
-            "01022",
-            "02013",
-            "05021",
-            "05032",
-            "05036",
-            "02060",
-            "02093",
-            "02039"
-        ],
-        "design-contrasts": {
-            "perspective_high_self": "high_trust_perspective - self_perspective",
-            "perspective_low_self": "low_trust_perspective - self_perspective",
-            "perspective_high_low": "high_trust_perspective - low_trust_perspective",
-            "memory_perspective_self": "self_memory - self_perspective",
-            "memory_perspective_high": "high_trust_memory - high_trust_perspective",
-            "memory_perspective_low": "low_trust_memory - low_trust_perspective",
-            "memory_trust_target":"(high_trust_perspective - high_trust_memory) - (low_trust_perspective - low_trust_memory)",
-            "memory_trust_self_plus":"(high_trust_perspective - high_trust_memory) - (self_perspective - self_memory)",
-            "memory_trust_self_minus":"(high_trust_memory - high_trust_perspective) - (self_memory - self_perspective)"
-        },
-        "design-type": "block",
-        "group-level-regressors": []
-    },
-    "socialeval": {
-        "conditions": [
-            "prediction",
-            "evaluation",
-            "choice"
-        ],
-        "confound_regressors": [
-            "framewise_displacement",
-            "dvars",
-            "csf",
-            "trans_x",
-            "trans_y",
-            "trans_z",
-            "rot_x",
-            "rot_y",
-            "rot_z",
-            "white_matter"
-        ],
-        "network_regressors": [],
-        "block_regressors": [],
-        "trial_type": "condition",
-        "tr": 1.0,
-        "excludes": [
-            "02013",
-            "02022",
-            "02045",
-            "05054",
-            "05061"
-        ],
-        "design-contrasts": "default",
-        "design-type": "event",
-        "group-level-regressors": [
-            "indegree_CloseFrds_fa18",
-            "outdegree_CloseFrds_fa18"
-        ]
-    },
-    "socworkingmem": {
-        "conditions": [],
-        "confound_regressors": [
-            "framewise_displacement",
-            "dvars",
-            "csf",
-            "trans_x",
-            "trans_y",
-            "trans_z",
-            "rot_x",
-            "rot_y",
-            "rot_z",
-            "white_matter"
-        ],
-        "network_regressors": [],
-        "block_regressors": [],
-        "trial_type": "condition",
-        "tr": 1.0,
-        "excludes": [],
-        "design-contrasts": [],
-        "design-type": "event",
-        "group-level-regressors": []
-    },
-    "stressbuffer_alt": {
-        "conditions": [
-            "memory",
-            "perspective",
-            "valence",
-            "arousal",
-            "spatial"
-        ],
-        "confound_regressors": [
-            "framewise_displacement",
-            "dvars",
-            "csf",
-            "trans_x",
-            "trans_y",
-            "trans_z",
-            "rot_x",
-            "rot_y",
-            "rot_z",
-            "white_matter"
-        ],
-        "network_regressors": [
-            "indegree_CloseFrds_fa18"
-        ],
-        "block_regressors": [],
-        "trial_type": "trial_type",
-        "tr": 1.0,
-        "excludes": [
-            "01022",
-            "02013",
-            "05021",
-            "05032",
-            "05036"
-        ],
-        "design-contrasts": "default",
-        "design-type": "event",
-        "group-level-regressors": [
-            "indegree_CloseFrds_fa18",
-            "outdegree_CloseFrds_fa18",
-            "Loneliness",
-            "STAI_Anxiety"
-        ]
-    }
+{
+     "faces": {
+          "block_regressors": [],
+          "conditions": [
+               "nondorm",
+               "dorm",
+               "attention_check"
+          ],
+          "confound_regressors": [
+               "framewise_displacement",
+               "dvars",
+               "csf",
+               "trans_x",
+               "trans_y",
+               "trans_z",
+               "rot_x",
+               "rot_y",
+               "rot_z",
+               "white_matter"
+          ],
+          "design-contrasts": "default",
+          "design-type": "event",
+          "excludes": [
+               "02013",
+               "02031",
+               "02037",
+               "02045",
+               "02060",
+               "05061"
+          ],
+          "group-level-regressors": [
+               "indegree_CloseFrds_fa18",
+               "outdegree_CloseFrds_fa18",
+               "Extraversion",
+               "Agreeableness",
+               "Openness",
+               "Conscientiousness",
+               "EmotionalStability",
+               "Loneliness",
+               "Self_Esteem",
+               "STAI_Anxiety"
+          ],
+          "modulators": [],
+          "network_regressors": [],
+          "tr": 1.0,
+          "trial_type": "condition"
+     },
+     "stressbuffer": {
+          "block_regressors": [
+               "fixation",
+               "memory",
+               "perspective",
+               "valence",
+               "arousal",
+               "spatial"
+          ],
+          "conditions": [
+               "self",
+               "low_trust",
+               "high_trust"
+          ],
+          "confound_regressors": [
+               "framewise_displacement",
+               "dvars",
+               "csf",
+               "trans_x",
+               "trans_y",
+               "trans_z",
+               "rot_x",
+               "rot_y",
+               "rot_z",
+               "white_matter",
+               "non_steady_state"
+          ],
+          "design-contrasts": {
+               "perspective_high_self": "high_trust_perspective - self_perspective",
+               "perspective_low_self": "low_trust_perspective - self_perspective",
+               "perspective_high_low": "high_trust_perspective - low_trust_perspective",
+               "memory_x_valence_rating": "memory_x_intensity_rating",
+               "self_perspective_x_valence_delta":"self_perspective_x_intensity_delta",
+               "high_trust_perspective_x_valence_delta": "high_trust_perspective_x_intensity_delta",
+               "low_trust_perspective_x_valence_delta": "low_trust_perspective_x_intensity_delta",
+               "memory_unmod_self": "self_perspective - memory",
+               "memory_mod_self": "self_perspective - memory_x_intensity_rating",
+               "memory_unmod_high": "high_trust_perspective - memory",
+               "memory_mod_high": "high_trust_perspective - memory_x_intensity_rating",
+               "memory_unmod_low": "low_trust_perspective - memory",
+               "memory_mod_low": "low_trust_perspective - memory_x_intensity_rating",
+               "memory_v_spatial": "memory - spatial",
+               "self_active_baseline": "self_perspective - spatial",
+               "high_active_baseline": "high_trust_perspective - spatial",
+               "low_active_baseline": "low_trust_perspective - spatial",
+               "self_v_other": "(high_trust_perspective + low_trust_perspective) - self_perspective"
+          },
+          "design-type": "block",
+          "excludes": [
+               "02039",
+               "02093",
+               "02013"
+          ],
+          "group-level-regressors": [],
+          "modulators": [
+               "intensity_rating",
+               "intensity_delta"
+          ],
+          "network_regressors": [],
+          "tr": 1.0,
+          "trial_type": "block_type"
+     },
+     "socialeval": {
+          "block_regressors": [],
+          "conditions": [
+               "prediction",
+               "evaluation",
+               "choice"
+          ],
+          "confound_regressors": [
+               "global_signal",
+               "framewise_displacement",
+               "dvars",
+               "csf",
+               "trans_x",
+               "trans_y",
+               "trans_z",
+               "rot_x",
+               "rot_y",
+               "rot_z",
+               "white_matter"
+          ],
+          "design-contrasts": "default",
+          "design-type": "event",
+          "excludes": [
+               "02013",
+               "02022",
+               "02045",
+               "05054",
+               "05061"
+          ],
+          "group-level-regressors": [
+               "indegree_CloseFrds_fa18",
+               "outdegree_CloseFrds_fa18"
+          ],
+          "modulators": [],
+          "network_regressors": [],
+          "tr": 1.0,
+          "trial_type": "condition"
+     },
+     "socworkingmem": {
+          "block_regressors": [],
+          "conditions": [],
+          "confound_regressors": [
+               "framewise_displacement",
+               "dvars",
+               "csf",
+               "trans_x",
+               "trans_y",
+               "trans_z",
+               "rot_x",
+               "rot_y",
+               "rot_z",
+               "white_matter"
+          ],
+          "design-contrasts": [],
+          "design-type": "event",
+          "excludes": [],
+          "group-level-regressors": [],
+          "modulators": [],
+          "network_regressors": [],
+          "tr": 1.0,
+          "trial_type": "condition"
+     }
 }
