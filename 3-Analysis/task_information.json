@@ -1,0 +1,53 @@
+{
+      "faces": {
+            "block_identifier": "block_type",
+            "condition_identifier": "trial_type",
+            "confound_regressors": [],
+            "design_contrasts": "default",
+            "excludes": [],
+            "group_level_regressors": [],
+            "modulators": [],
+            "tr": 1.0
+      },
+      "socialeval": {
+            "block_identifier": "block_type",
+            "condition_identifier": "trial_type",
+            "confound_regressors": [],
+            "design_contrasts": "default",
+            "excludes": [],
+            "group_level_regressors": [],
+            "modulators": [],
+            "tr": 1.0
+      },
+      "stressbuffer": {
+            "block_identifier": "block_type",
+            "condition_identifier": "trial_type",
+            "confound_regressors": [
+                  "framewise_displacement",
+                  "dvars",
+                  "csf",
+                  "trans_x",
+                  "trans_y",
+                  "trans_z",
+                  "rot_x",
+                  "rot_y",
+                  "rot_z",
+                  "white_matter"
+            ],
+            "design_contrasts": {
+                  "perspective_high_self": "high_trust_perspective - self_perspective",
+                  "perspective_low_self": "low_trust_perspective - self_perspective",
+                  "perspective_high_low": "high_trust_perspective - low_trust_perspective",
+                  "self_memory": "self_perspective - memory",
+                  "high_trust_memory": "high_trust_perspective - memory",
+                  "low_trust_memory": "low_trust_perspective - memory",
+                  "other_v_self": "(high_trust_perspective + low_trust_perspective) - self_perspective",
+                  "self_v_baseline": "self_perspective",
+                  "other_v_baseline":"high_trust_perspective + low_trust_perspective"
+             },
+            "excludes": [],
+            "group_level_regressors": [],
+            "modulators": [],
+            "tr": 1.0
+      }
+}
